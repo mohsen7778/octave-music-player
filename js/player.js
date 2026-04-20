@@ -55,7 +55,6 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// Added more instances for ultra-high reliability 
 const INVIDIOUS =[
     'https://inv.nadeko.net', 'https://invidious.privacyredirect.com',
     'https://invidious.nerdvpn.de', 'https://iv.melmac.space', 
@@ -404,10 +403,27 @@ window.setSleepTimer = (minutes) => {
     }, minutes * 60000);
 };
 
+// --- AGGRESSIVE LYRICS SCRUBBER ---
 window.fetchLyrics = async (artist, title) => {
-    const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').split('-')[0].trim();
-    const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
+    // 1. YouTube videos often name things "Artist - Title". Extract only the right side.
+    let rawTitle = title.includes(' - ') ? title.split(' - ').slice(1).join(' - ') : title;
+    
+    // 2. Eradicate absolutely all junk data from the title so it's a pure string
+    const cleanTitle = rawTitle
+        .replace(/[\(\[【].*?[\)\]】]/g, '') // Remove everything inside brackets/parentheses
+        .replace(/(feat\.|ft\.|remix|official|video|music video|lyric|audio|live).*/gi, '') // Remove un-bracketed junk
+        .replace(/["']/g, '') // Remove quotes
+        .trim();
+        
+    // 3. Lyrics.ovh is VERY strict. Send only the PRIMARY artist.
+    const cleanArtist = artist
+        .replace(/ - Topic/gi, '')
+        .replace(/VEVO/gi, '')
+        .split(/,|&| ft\.| feat\.| with /i)[0] // Drops secondary artists
+        .trim();
+
     try {
+        // LRCLIB is more forgiving and acts like a search engine
         const query = `${cleanArtist} ${cleanTitle}`;
         const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
         if (r1.ok) {
@@ -415,13 +431,16 @@ window.fetchLyrics = async (artist, title) => {
             if (data && data.length > 0 && data[0].plainLyrics) return data[0].plainLyrics;
         }
     } catch(e) { console.warn("LRCLIB fallback triggered"); }
+    
     try {
+        // Lyrics.ovh is strict. Requires EXACT /Artist/Title structure
         const r2 = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`);
         if (r2.ok) {
             const data = await r2.json();
             if (data.lyrics) return data.lyrics;
         }
     } catch(e) { console.warn("Lyrics.ovh fallback triggered"); }
+    
     return "Lyrics not available in open-source databases.";
 };
 
