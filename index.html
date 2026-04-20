@@ -14,66 +14,69 @@
 
     <div class="mobile-app">
         
-        <header class="app-header">
-            <div class="header-brand">
-                <i class="fa-solid fa-wave-square brand-icon"></i>
-                <span>Octave</span>
-            </div>
-            <div class="header-actions">
-                <button class="clay-btn-sm"><i class="fa-solid fa-gear"></i></button>
-            </div>
-        </header>
-
-        <main class="main-content scrollable" id="dynamic-content">
+        <main class="main-content scroll-y" id="dynamic-view">
             
-            <section class="home-section">
-                <div class="section-header">
-                    <h2 class="section-title">Recently Played</h2>
+            <header class="app-header">
+                <div class="greeting">
+                    <h1 id="time-greeting">Good afternoon</h1>
+                    <div class="header-actions">
+                        <button class="icon-btn"><i class="fa-regular fa-bell"></i></button>
+                        <button class="icon-btn"><i class="fa-solid fa-gear"></i></button>
+                    </div>
                 </div>
                 
-                <div class="horizontal-scroll">
-                    <div class="track-card">
-                        <div class="card-art"></div>
-                        <div class="card-title">Blinding Lights</div>
-                        <div class="card-artist">The Weeknd</div>
-                    </div>
-                    <div class="track-card">
-                        <div class="card-art"></div>
+                <div class="filter-chips scroll-x">
+                    <div class="chip active">All</div>
+                    <div class="chip">Music</div>
+                    <div class="chip">Podcasts</div>
+                    <div class="chip">Live Events</div>
+                </div>
+            </header>
+
+            <section class="content-section">
+                <h2 class="section-title">Recently Played</h2>
+                <div class="horizontal-scroll scroll-x">
+                    <div class="square-card">
+                        <div class="card-art shadow-heavy"></div>
                         <div class="card-title">Midnight City</div>
-                        <div class="card-artist">M83</div>
                     </div>
-                    <div class="track-card">
-                        <div class="card-art"></div>
-                        <div class="card-title">Nightcall</div>
-                        <div class="card-artist">Kavinsky</div>
+                    <div class="square-card">
+                        <div class="card-art shadow-heavy"></div>
+                        <div class="card-title">After Hours</div>
+                    </div>
+                    <div class="square-card">
+                        <div class="card-art shadow-heavy"></div>
+                        <div class="card-title">Resonance</div>
+                    </div>
+                    <div class="square-card">
+                        <div class="card-art shadow-heavy"></div>
+                        <div class="card-title">Starboy</div>
                     </div>
                 </div>
             </section>
 
-            <section class="home-section mt-30">
-                <h2 class="section-title">Your Playlists</h2>
+            <section class="content-section">
+                <h2 class="section-title">Your Heavy Duty Mixes</h2>
                 <div class="vertical-list">
-                    <div class="list-item clay-panel">
-                        <div class="item-icon"><i class="fa-solid fa-heart"></i></div>
-                        <div class="item-info">
-                            <div class="item-title">Liked Songs</div>
-                            <div class="item-sub">142 tracks</div>
-                        </div>
-                        <button class="play-circle"><i class="fa-solid fa-play"></i></button>
-                    </div>
-
-                    <div class="list-item clay-panel">
-                        <div class="item-icon custom-art"></div>
-                        <div class="item-info">
-                            <div class="item-title">Late Night Drive</div>
-                            <div class="item-sub">45 tracks</div>
+                    <div class="list-item">
+                        <div class="list-art shadow-heavy"></div>
+                        <div class="list-info">
+                            <div class="list-title">Late Night Drive</div>
+                            <div class="list-subtitle">The Weeknd, Kavinsky, M83</div>
                         </div>
                     </div>
-
-                    <div class="list-item clay-panel" id="create-playlist-btn">
-                        <div class="item-icon add-icon"><i class="fa-solid fa-plus"></i></div>
-                        <div class="item-info">
-                            <div class="item-title">Create Playlist</div>
+                    <div class="list-item">
+                        <div class="list-art shadow-heavy"></div>
+                        <div class="list-info">
+                            <div class="list-title">Focus / Code</div>
+                            <div class="list-subtitle">Synthwave & Lo-Fi Beats</div>
+                        </div>
+                    </div>
+                    <div class="list-item">
+                        <div class="list-art shadow-heavy"></div>
+                        <div class="list-info">
+                            <div class="list-title">Gym Heavy</div>
+                            <div class="list-subtitle">High energy workout tracks</div>
                         </div>
                     </div>
                 </div>
@@ -82,35 +85,38 @@
             <div class="bottom-spacer"></div>
         </main>
 
-        <div class="mini-player">
-            <div class="mini-progress-bar">
-                <div class="mini-progress-fill" style="width: 45%;"></div>
-            </div>
-            <div class="mini-player-inner">
+        <div class="mini-player glass-panel">
+            <div class="progress-bar-mini" style="width: 45%;"></div>
+            <div class="mini-inner">
                 <div class="mini-art"></div>
                 <div class="mini-info">
                     <div class="mini-title">Blinding Lights</div>
                     <div class="mini-artist">The Weeknd</div>
                 </div>
                 <div class="mini-controls">
+                    <button class="icon-btn"><i class="fa-solid fa-laptop-medical"></i></button>
                     <button class="icon-btn"><i class="fa-regular fa-heart"></i></button>
-                    <button class="icon-btn play-active"><i class="fa-solid fa-pause"></i></button>
+                    <button class="icon-btn play-btn-mini"><i class="fa-solid fa-play"></i></button>
                 </div>
             </div>
         </div>
 
-        <nav class="bottom-nav">
-            <div class="nav-item active" data-target="home">
+        <nav class="bottom-nav glass-panel">
+            <div class="nav-item active" data-tab="home">
                 <i class="fa-solid fa-house"></i>
                 <span>Home</span>
             </div>
-            <div class="nav-item" data-target="search">
+            <div class="nav-item" data-tab="search">
                 <i class="fa-solid fa-magnifying-glass"></i>
                 <span>Search</span>
             </div>
-            <div class="nav-item" data-target="library">
+            <div class="nav-item" data-tab="library">
                 <i class="fa-solid fa-layer-group"></i>
                 <span>Library</span>
+            </div>
+            <div class="nav-item" data-tab="premium">
+                <i class="fa-brands fa-spotify"></i>
+                <span>Premium</span>
             </div>
         </nav>
 
