@@ -13,6 +13,7 @@
 <body>
 
     <div class="mobile-app">
+        
         <main class="main-content scroll-y" id="dynamic-view">
             <header class="app-header">
                 <div class="greeting">
@@ -30,7 +31,9 @@
 
             <section class="content-section">
                 <h2 class="section-title">Recently Played</h2>
-                <div class="horizontal-scroll scroll-x" id="home-recent-grid"></div>
+                <div class="horizontal-scroll scroll-x" id="home-recent-grid">
+                    <div style="color: var(--text-secondary); font-size: 13px; padding-bottom: 20px;">Play some tracks to build your history...</div>
+                </div>
             </section>
 
             <section class="content-section">
@@ -72,7 +75,7 @@
             <div class="fp-info-row">
                 <div class="fp-meta">
                     <h2 id="fp-title">Nothing Playing</h2>
-                    <p id="fp-artist">Select a track</p>
+                    <p id="fp-artist" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); text-decoration: underline dashed;">Select a track</p>
                 </div>
                 <button class="icon-btn" id="fp-like"><i class="fa-regular fa-heart"></i></button>
             </div>
@@ -130,11 +133,61 @@
             </div>
         </div>
 
-        <div class="modal-overlay" id="brave-modal">...</div>
-        <div class="modal-overlay" id="timer-modal">...</div>
-        <div class="modal-overlay" id="playlist-modal">...</div>
-        <div class="modal-overlay" id="track-options-modal">...</div>
-        <div class="modal-overlay" id="select-playlist-modal">...</div>
+        <div class="modal-overlay" id="brave-modal">
+            <div class="modal-content glass-panel shadow-heavy">
+                <div style="font-size: 40px; color: #ff5000; margin-bottom: 16px; text-align: center;"><i class="fa-brands fa-brave"></i></div>
+                <h3 style="text-align: center; margin-bottom: 12px;">Use Brave Browser</h3>
+                <p style="color: var(--text-secondary); font-size: 14px; text-align: center; margin-bottom: 24px; line-height: 1.5;">For the ultimate heavy-duty experience with unkillable background play and zero ads, we strictly recommend launching Octave in Brave Browser.</p>
+                <div class="modal-actions">
+                    <button class="btn-secondary" id="close-brave">Maybe Later</button>
+                    <a href="https://play.google.com/store/apps/details?id=com.brave.browser" target="_blank" class="btn-primary" id="get-brave" style="color: var(--bg-deep); text-decoration: none;">Get Brave</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="timer-modal">
+            <div class="modal-content glass-panel shadow-heavy" style="text-align: center;">
+                <h3 style="margin-bottom: 16px;">Sleep Timer</h3>
+                <div class="vertical-list">
+                    <div class="drawer-item" style="justify-content: center;" onclick="window.setSleepTimer(15)">15 Minutes</div>
+                    <div class="drawer-item" style="justify-content: center;" onclick="window.setSleepTimer(30)">30 Minutes</div>
+                    <div class="drawer-item" style="justify-content: center;" onclick="window.setSleepTimer(60)">60 Minutes</div>
+                    <div class="drawer-item" style="justify-content: center; color: #ff4444;" onclick="window.setSleepTimer(0)">Turn Off Timer</div>
+                </div>
+                <button class="btn-secondary" style="margin-top: 16px; width: 100%;" id="close-timer">Cancel</button>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="playlist-modal">
+            <div class="modal-content glass-panel shadow-heavy">
+                <h3 style="margin-bottom: 16px;">Create Playlist</h3>
+                <input type="text" id="playlist-name" class="modern-input" placeholder="Playlist Name (e.g. Gym Heavy)" autocomplete="off">
+                <div class="modal-actions" style="margin-top: 24px;">
+                    <button class="btn-secondary" id="close-playlist">Cancel</button>
+                    <button class="btn-primary" id="save-playlist" style="color: var(--bg-deep);">Create</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="track-options-modal">
+            <div class="modal-content glass-panel shadow-heavy">
+                <div id="opt-track-info" style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--glass-border); padding-bottom: 16px;"></div>
+                <div class="vertical-list">
+                    <div class="drawer-item" id="opt-like-track"><i class="fa-regular fa-heart"></i> <span>Like Track</span></div>
+                    <div class="drawer-item" id="opt-add-playlist"><i class="fa-solid fa-list"></i> <span>Add to Playlist</span></div>
+                    <div class="drawer-item" id="opt-sleep-timer"><i class="fa-solid fa-clock"></i> <span>Sleep Timer</span></div>
+                </div>
+                <button class="btn-secondary" style="margin-top: 16px; width: 100%;" id="close-track-options">Cancel</button>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="select-playlist-modal">
+            <div class="modal-content glass-panel shadow-heavy">
+                <h3 style="margin-bottom: 16px;">Select Playlist</h3>
+                <div class="vertical-list scroll-y" id="playlist-selection-list" style="max-height: 250px; margin-bottom: 16px;"></div>
+                <button class="btn-secondary" style="width: 100%;" id="close-select-playlist">Cancel</button>
+            </div>
+        </div>
     </div>
 
     <script src="js/player.js"></script>
