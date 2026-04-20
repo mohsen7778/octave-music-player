@@ -3,19 +3,25 @@ const INVIDIOUS = [
     'https://invidious.privacyredirect.com',
     'https://invidious.nerdvpn.de',
     'https://iv.melmac.space',
-    'https://invidious.io.lol',
-    'https://yt.cdaut.de'
+    'https://invidious.io.lol'
 ];
 let invIdx = 0;
 
+// NEW: Piped API instances specifically for bypassing YouTube IP blocks
+const PIPED = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.smnz.de',
+    'https://pipedapi.adminforge.de',
+    'https://pipedapi.tokhmi.xyz'
+];
+let pipedIdx = 0;
+
 const S = { queue: [], currentIndex: -1, isPlaying: false };
 
-// 1. Native HTML5 Audio Engine (Survives Chrome Background)
+// 1. Native HTML5 Audio Engine
 const audio = new Audio();
-// Removed crossOrigin - this was causing the browser to block YouTube's raw streams
 
 audio.addEventListener('playing', () => {
-    // Only shows 'pause' when audio is actively outputting sound
     S.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
 });
@@ -26,7 +32,6 @@ audio.addEventListener('pause', () => {
 });
 
 audio.addEventListener('waiting', () => {
-    // Shows loading spinner while buffering/fetching
     updatePlayIcons('fa-solid fa-spinner fa-spin');
 });
 
@@ -90,7 +95,7 @@ function formatTime(seconds) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-// 2. Load Track & Fetch Raw Audio Stream
+// 2. Load Track & Fetch Proxy Audio Stream via Piped
 window.playTrack = async (track) => {
     S.queue.push(track);
     S.currentIndex = S.queue.length - 1;
@@ -119,45 +124,46 @@ window.playTrack = async (track) => {
     // Force UI into loading state
     updatePlayIcons('fa-solid fa-spinner fa-spin');
     
-    // Start smart fetch loop
+    // Start smart fetch loop using Piped API
     await fetchAndPlay(track, 0);
 };
 
-// Recursive fetch function to bypass broken/blocked Invidious nodes
+// Piped API Recursive Fetch (Bypasses IP Blocks)
 async function fetchAndPlay(track, attempt) {
-    if (attempt >= INVIDIOUS.length) {
-        alert("All servers failed to load audio. Please try another track.");
+    if (attempt >= PIPED.length) {
+        alert("Audio streams currently unavailable. Please try another track.");
         updatePlayIcons('fa-solid fa-play');
         return;
     }
 
-    const base = INVIDIOUS[(invIdx + attempt) % INVIDIOUS.length];
+    const base = PIPED[(pipedIdx + attempt) % PIPED.length];
     let streamUrl = null;
 
     try {
-        const r = await fetch(`${base}/api/v1/videos/${track.videoId}?fields=adaptiveFormats`, { signal: AbortSignal.timeout(5000) });
+        const r = await fetch(`${base}/streams/${track.videoId}`, { signal: AbortSignal.timeout(6000) });
         if (r.ok) {
             const d = await r.json();
-            const audioFormats = d.adaptiveFormats.filter(f => f.type.includes('audio'));
-            if (audioFormats.length > 0) {
-                streamUrl = audioFormats[0].url;
+            // Get proxied audio streams
+            if (d.audioStreams && d.audioStreams.length > 0) {
+                // Grab the highest bitrate M4A or WebM
+                streamUrl = d.audioStreams[0].url; 
             }
         }
     } catch(e) {
-        console.warn(`Server ${base} fetch failed, trying next...`);
+        console.warn(`Piped Server ${base} fetch failed, trying next...`);
     }
 
-    // Fallback if the direct adaptive format fails to pull
     if (!streamUrl) {
-        streamUrl = `${base}/latest_version?id=${track.videoId}&itag=140`;
+        await fetchAndPlay(track, attempt + 1);
+        return;
     }
 
     audio.src = streamUrl;
     
     try {
         await audio.play();
-        // Success! Save this working index
-        invIdx = (invIdx + attempt) % INVIDIOUS.length;
+        // Success! Save this working index for faster future loads
+        pipedIdx = (pipedIdx + attempt) % PIPED.length;
 
         // Set Lock Screen details
         if ('mediaSession' in navigator) {
@@ -171,13 +177,12 @@ async function fetchAndPlay(track, attempt) {
             navigator.mediaSession.setActionHandler('pause', () => audio.pause());
         }
     } catch (e) {
-        console.warn("Audio play blocked by CORS or 403 Forbidden. Retrying on next server...", e);
-        // Automatically try the next server if playback rejects
+        console.warn("Audio play blocked. Retrying on next server...", e);
         await fetchAndPlay(track, attempt + 1);
     }
 }
 
-// 3. Search API
+// 3. Search API (Still uses Invidious because it's faster for text search)
 window.performSearch = async (query) => {
     for (let i = 0; i < INVIDIOUS.length; i++) {
         const base = INVIDIOUS[(invIdx + i) % INVIDIOUS.length];
