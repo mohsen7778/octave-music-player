@@ -921,12 +921,13 @@ body {
 /* --- PREMIUM LIQUID LAYOUT --- */
 .full-player-overlay {
     position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
+    top: 100vh; left: 0; width: 100%; height: 100%;
     background: var(--bg-deep); /* Base dark background */
     padding: 10px 20px 20px 20px !important;
     display: flex;
     flex-direction: column;
     z-index: 1000;
+    transition: top 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* Liquid Ambient Background */
