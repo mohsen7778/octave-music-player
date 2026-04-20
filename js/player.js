@@ -256,6 +256,10 @@ function updatePlayerUI(track) {
     if(els.fT) els.fT.textContent = track.title;
     if(els.fA) els.fA.innerHTML = `${track.author} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
     if(els.fArt) { els.fArt.src = track.thumb; els.fArt.style.display = 'block'; }
+    
+    // Ambient Background Update
+    const ambientBg = document.getElementById('fp-ambient-bg');
+    if(ambientBg) ambientBg.style.backgroundImage = `url(${track.thumb})`;
 
     const isLiked = !!window.OCTAVE.liked[track.videoId];
     const likeHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
@@ -367,24 +371,74 @@ window.fetchArtistBio = async (artist) => {
 
 // SAFETY WRAPPER: Attach all click listeners ONLY when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+    // Basic Controls
     document.querySelector('.play-btn-mini')?.addEventListener('click', (e) => { e.stopPropagation(); window.togglePlay(); });
     document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
     document.getElementById('fp-next')?.addEventListener('click', playNextLogic);
     document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
     
+    // Likes
     document.getElementById('mini-like-btn')?.addEventListener('click', (e) => { 
         e.stopPropagation(); 
         if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); 
     });
-    
     document.getElementById('fp-like')?.addEventListener('click', () => { 
         if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); 
     });
 
+    // Seeking
     document.getElementById('fp-progress-container')?.addEventListener('click', (e) => seekToPosition(e, document.getElementById('fp-progress-container')));
-    
     document.querySelector('.mini-player')?.addEventListener('click', (e) => {
         const rect = document.querySelector('.mini-player').getBoundingClientRect();
         if (e.clientY - rect.top <= 10) { e.stopPropagation(); seekToPosition(e, document.querySelector('.mini-player')); }
     });
+
+    // --- NEW: BINDINGS FOR LYRICS, BIO, QUEUE, TIMER ---
+    const fpPanel = document.getElementById('fp-overlay-panel');
+    const fpContent = document.getElementById('fp-overlay-content');
+    const fpTitle = document.getElementById('fp-overlay-title');
+    
+    document.getElementById('fp-lyrics-btn')?.addEventListener('click', async () => {
+        if(window.OCTAVE.currentIndex < 0) return;
+        fpTitle.innerText = 'Lyrics';
+        fpContent.innerHTML = '<div style="text-align:center; margin-top: 40px;"><i class="fa-solid fa-spinner fa-spin" style="font-size: 24px; color: var(--accent);"></i></div>';
+        fpPanel.classList.add('active');
+        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        const lyrics = await window.fetchLyrics(track.author, track.title);
+        fpContent.innerHTML = `<div id="lyrics-content">${lyrics}</div>`;
+    });
+
+    document.getElementById('fp-artist')?.addEventListener('click', async () => {
+        if(window.OCTAVE.currentIndex < 0) return;
+        fpTitle.innerText = 'Artist Bio';
+        fpContent.innerHTML = '<div style="text-align:center; margin-top: 40px;"><i class="fa-solid fa-spinner fa-spin" style="font-size: 24px; color: var(--accent);"></i></div>';
+        fpPanel.classList.add('active');
+        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        const bio = await window.fetchArtistBio(track.author);
+        fpContent.innerHTML = `<div style="color: var(--text-primary); font-size: 15px; line-height: 1.8;">${bio}</div>`;
+    });
+
+    document.getElementById('fp-queue-btn')?.addEventListener('click', () => {
+        if(window.OCTAVE.currentIndex < 0) return;
+        fpTitle.innerText = 'Up Next';
+        fpContent.innerHTML = '';
+        fpPanel.classList.add('active');
+        const q = window.OCTAVE.queue;
+        const curr = window.OCTAVE.currentIndex;
+        for(let i = curr; i < q.length; i++) {
+            const track = q[i];
+            const isPlaying = i === curr;
+            const el = document.createElement('div');
+            el.style.cssText = `display: flex; align-items: center; gap: 14px; padding: 12px; background: ${isPlaying ? 'rgba(30,215,96,0.1)' : 'var(--bg-surface)'}; border-radius: 8px; margin-bottom: 12px; border: ${isPlaying ? '1px solid var(--accent)' : '1px solid transparent'};`;
+            el.innerHTML = `<img src="${track.thumb}" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover;"><div style="flex: 1; min-width: 0;"><div style="font-size: 14px; font-weight: 600; color: ${isPlaying ? 'var(--accent)' : 'var(--text-primary)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${track.title}</div><div style="font-size: 12px; color: var(--text-secondary);">${track.author}</div></div>${isPlaying ? '<i class="fa-solid fa-volume-high" style="color: var(--accent);"></i>' : ''}`;
+            fpContent.appendChild(el);
+        }
+    });
+
+    document.getElementById('close-fp-overlay')?.addEventListener('click', () => fpPanel.classList.remove('active'));
+    document.getElementById('opt-sleep-timer')?.addEventListener('click', () => {
+        document.getElementById('track-options-modal')?.classList.remove('active');
+        document.getElementById('timer-modal')?.classList.add('active');
+    });
+    document.getElementById('close-timer')?.addEventListener('click', () => document.getElementById('timer-modal')?.classList.remove('active'));
 });
