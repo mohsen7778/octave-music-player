@@ -74,11 +74,16 @@
             <div class="fp-info-row">
                 <div class="fp-meta">
                     <h2 id="fp-title">Nothing Playing</h2>
-                    <p id="fp-artist">Select a track</p>
+                    <p id="fp-artist" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); text-decoration: underline dashed; text-underline-offset: 4px;">Select a track</p>
                 </div>
                 <button class="icon-btn" id="fp-like"><i class="fa-regular fa-heart"></i></button>
             </div>
             
+            <div style="display: flex; justify-content: space-between; padding: 0 10px; margin-top: 10px; margin-bottom: -5px;">
+                <button class="icon-btn" id="fp-lyrics-btn" style="font-size: 13px; color: var(--text-secondary); width: auto; gap: 8px; display: flex; align-items: center;"><i class="fa-solid fa-align-left"></i> Lyrics</button>
+                <button class="icon-btn" id="fp-queue-btn" style="font-size: 13px; color: var(--text-secondary); width: auto; gap: 8px; display: flex; align-items: center;"><i class="fa-solid fa-list-ol"></i> Up Next</button>
+            </div>
+
             <div class="fp-progress-section">
                 <div class="fp-progress-bar" id="fp-progress-container">
                     <div class="fp-progress-fill" id="fp-progress-fill" style="width: 0%;"></div>
@@ -89,17 +94,10 @@
                 </div>
             </div>
             
-            <div class="fp-controls">
+            <div class="fp-controls" style="margin-top: 20px;">
                 <button class="icon-btn sm" id="fp-prev"><i class="fa-solid fa-backward-step"></i></button>
                 <button class="play-btn-huge" id="fp-play"><i class="fa-solid fa-play"></i></button>
                 <button class="icon-btn sm" id="fp-next"><i class="fa-solid fa-forward-step"></i></button>
-            </div>
-
-            <div class="fp-action-row">
-                <button class="icon-btn" id="fp-lyrics-btn"><i class="fa-solid fa-align-left"></i></button>
-                <button class="icon-btn" id="fp-bio-btn"><i class="fa-solid fa-book-open"></i></button>
-                <button class="icon-btn" id="fp-queue-btn"><i class="fa-solid fa-list-ol"></i></button>
-                <button class="icon-btn" id="fp-timer-btn"><i class="fa-solid fa-clock"></i></button>
             </div>
 
             <div id="fp-overlay-panel" class="full-overlay-panel">
@@ -176,6 +174,7 @@
                 <div class="vertical-list">
                     <div class="drawer-item" id="opt-like-track"><i class="fa-regular fa-heart"></i> <span>Like Track</span></div>
                     <div class="drawer-item" id="opt-add-playlist"><i class="fa-solid fa-list"></i> <span>Add to Playlist</span></div>
+                    <div class="drawer-item" id="opt-sleep-timer"><i class="fa-solid fa-clock"></i> <span>Sleep Timer</span></div>
                 </div>
                 <button class="btn-secondary" style="margin-top: 16px; width: 100%;" id="close-track-options">Cancel</button>
             </div>
