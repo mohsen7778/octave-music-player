@@ -311,3 +311,108 @@ body {
 .nav-item.active i {
     transform: scale(1.1);
 }
+/* --- DYNAMIC VIEWS (SEARCH & LIBRARY) --- */
+.search-header { 
+    padding: 40px 20px 20px 20px; 
+    background: var(--bg-deep); 
+}
+
+.search-title { 
+    font-size: 24px; 
+    font-weight: 700; 
+    margin-bottom: 16px; 
+}
+
+.search-input-wrap { 
+    position: relative; 
+}
+
+.search-input-wrap i { 
+    position: absolute; 
+    left: 16px; 
+    top: 50%; 
+    transform: translateY(-50%); 
+    color: var(--text-secondary); 
+}
+
+.search-box { 
+    width: 100%; 
+    background: var(--bg-surface); 
+    border: 1px solid var(--glass-border); 
+    padding: 14px 14px 14px 44px; 
+    border-radius: 8px; 
+    color: var(--text-primary); 
+    font-family: inherit; 
+    font-size: 14px; 
+    box-shadow: var(--shadow-soft); 
+    outline: none; 
+}
+
+.search-box:focus { 
+    border-color: var(--accent); 
+}
+
+.search-results { 
+    padding: 20px; 
+    display: flex; 
+    flex-direction: column; 
+    gap: 12px; 
+}
+
+.result-item { 
+    display: flex; 
+    align-items: center; 
+    gap: 14px; 
+    padding: 12px; 
+    background: var(--bg-surface); 
+    border-radius: 8px; 
+    box-shadow: var(--shadow-soft); 
+    cursor: pointer; 
+    transition: background 0.2s; 
+}
+
+.result-item:active { 
+    background: var(--bg-deep); 
+}
+
+.result-thumb { 
+    width: 50px; 
+    height: 50px; 
+    border-radius: 6px; 
+    background: #2a2d36; 
+    object-fit: cover; 
+}
+
+.result-info { 
+    flex: 1; 
+    min-width: 0; 
+}
+
+.result-title { 
+    font-size: 14px; 
+    font-weight: 600; 
+    white-space: nowrap; 
+    overflow: hidden; 
+    text-overflow: ellipsis; 
+    margin-bottom: 4px; 
+}
+
+.result-artist { 
+    font-size: 12px; 
+    color: var(--text-secondary); 
+}
+
+/* Loading Spinner for Search */
+.spinner { 
+    border: 3px solid rgba(255,255,255,0.1); 
+    border-top-color: var(--accent); 
+    border-radius: 50%; 
+    width: 24px; 
+    height: 24px; 
+    animation: spin 1s linear infinite; 
+    margin: 20px auto; 
+}
+
+@keyframes spin { 
+    to { transform: rotate(360deg); } 
+}
