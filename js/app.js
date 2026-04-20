@@ -1,4 +1,14 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // --- SPLASH SCREEN LOGIC ---
+    setTimeout(() => {
+        const splash = document.getElementById('splash-screen');
+        if (splash) {
+            splash.style.opacity = '0';
+            splash.style.visibility = 'hidden';
+            setTimeout(() => splash.remove(), 600); // Remove from DOM after fade finishes
+        }
+    }, 2000); // Splash screen duration (2 seconds)
+
     const dynamicView = document.getElementById('dynamic-view');
     const views = {
         home: dynamicView.innerHTML,
@@ -25,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `,
         premium: `
             <div style="padding: 80px 20px; text-align: center;">
-                <i class="fa-solid fa-crown" style="font-size: 64px; color: var(--accent); margin-bottom: 24px;"></i>
+                <img src="logo.png" style="width: 80px; height: 80px; border-radius: 16px; margin-bottom: 24px;" onerror="this.style.display='none'">
                 <h2 style="font-size: 24px; margin-bottom: 12px;">Octave Premium</h2>
                 <p style="color: var(--text-secondary); font-size: 14px;">Ad-free background listening activated.</p>
             </div>
