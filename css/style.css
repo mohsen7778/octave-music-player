@@ -712,3 +712,23 @@ body {
 .drawer-item:hover, .drawer-item:active {
     background: rgba(255,255,255,0.05);
 }
+/* --- Z-INDEX FIXES & OVERLAYS --- */
+.drawer-backdrop { z-index: 3000 !important; }
+.side-drawer { z-index: 3001 !important; }
+.modal-overlay { z-index: 4000 !important; }
+
+.track-opts-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 10px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.empty-state-text {
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px 0;
+}
