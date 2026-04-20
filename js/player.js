@@ -4,15 +4,12 @@ window.OCTAVE = {
     playStats: {}, activeTrackForOptions: null
 };
 
-// --- CACHE & VAULT SYSTEM ---
 function saveCache() {
     localStorage.setItem('octave_data', JSON.stringify({
-        liked: window.OCTAVE.liked,
-        playlists: window.OCTAVE.playlists,
+        liked: window.OCTAVE.liked, playlists: window.OCTAVE.playlists,
         recentPlayed: window.OCTAVE.recentPlayed.slice(0, 30),
         recentSearches: window.OCTAVE.recentSearches.slice(0, 30),
-        playStats: window.OCTAVE.playStats,
-        queue: window.OCTAVE.queue,
+        playStats: window.OCTAVE.playStats, queue: window.OCTAVE.queue,
         currentIndex: window.OCTAVE.currentIndex
     }));
 }
@@ -37,9 +34,7 @@ window.exportVault = () => {
     const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = "Octave_Data_Vault.json";
-    a.click();
+    a.href = url; a.download = "Octave_Data_Vault.json"; a.click();
     URL.revokeObjectURL(url);
 };
 
@@ -82,8 +77,7 @@ window.onYouTubeIframeAPIReady = () => {
         playerVars: { autoplay: 0, controls: 0, playsinline: 1 },
         events: {
             onReady: e => { 
-                ytReady = true; 
-                e.target.setVolume(100);
+                ytReady = true; e.target.setVolume(100);
                 if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
                     updatePlayerUI(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
                 }
@@ -171,20 +165,13 @@ window.playTrackByIndex = (index) => {
 window.playTrack = (track) => {
     window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
-    if (existIdx >= 0) {
-        window.playTrackByIndex(existIdx);
-    } else {
-        window.OCTAVE.queue.push(track);
-        window.playTrackByIndex(window.OCTAVE.queue.length - 1);
-    }
+    if (existIdx >= 0) { window.playTrackByIndex(existIdx); } 
+    else { window.OCTAVE.queue.push(track); window.playTrackByIndex(window.OCTAVE.queue.length - 1); }
 };
 
 window.playPrev = () => {
-    if (YTP && YTP.getCurrentTime() > 3) {
-        YTP.seekTo(0);
-    } else if (window.OCTAVE.currentIndex > 0) {
-        window.playTrackByIndex(window.OCTAVE.currentIndex - 1);
-    }
+    if (YTP && YTP.getCurrentTime() > 3) { YTP.seekTo(0); } 
+    else if (window.OCTAVE.currentIndex > 0) { window.playTrackByIndex(window.OCTAVE.currentIndex - 1); }
 };
 
 async function playNextLogic() {
@@ -231,8 +218,7 @@ window.smartShufflePlaylist = (plName) => {
             if (countB !== countA) return countB - countA;
             return 0.5 - Math.random(); 
         });
-        window.OCTAVE.queue = sorted;
-        window.playTrackByIndex(0);
+        window.OCTAVE.queue = sorted; window.playTrackByIndex(0);
     }
 };
 
@@ -255,7 +241,7 @@ function updatePlayerUI(track) {
     document.getElementById('mini-art-el').style.backgroundSize = 'cover';
     
     document.getElementById('fp-title').textContent = track.title;
-    document.getElementById('fp-artist').textContent = track.author;
+    document.getElementById('fp-artist').innerHTML = `${track.author} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
     document.getElementById('fp-art').src = track.thumb;
     document.getElementById('fp-art').style.display = 'block';
 
@@ -272,8 +258,7 @@ function updatePlayerUI(track) {
 window.toggleLike = (track) => {
     if (window.OCTAVE.liked[track.videoId]) { delete window.OCTAVE.liked[track.videoId]; } 
     else { window.OCTAVE.liked[track.videoId] = track; }
-    saveCache();
-    updatePlayerUI(track);
+    saveCache(); updatePlayerUI(track);
     if(window.renderHome) window.renderHome();
 };
 
@@ -319,7 +304,6 @@ window.performSearch = async (query) => {
     return [];
 };
 
-// --- MEGA UPDATE: SLEEP TIMER ---
 window.setSleepTimer = (minutes) => {
     if(sleepTimerId) clearTimeout(sleepTimerId);
     if(minutes === 0) { 
@@ -334,24 +318,59 @@ window.setSleepTimer = (minutes) => {
     }, minutes * 60000);
 };
 
-// --- MEGA UPDATE: LYRICS & BIO FETCHERS ---
+// --- DUAL-FALLBACK API LOGIC FOR LYRICS & BIOS ---
 window.fetchLyrics = async (artist, title) => {
+    // Strip out (Official Video), [HQ], etc for cleaner matches
+    const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').split('-')[0].trim();
+    const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
+
+    // 1st Try: LRCLIB (Highly reliable open source)
     try {
-        const cleanTitle = title.replace(/\(.*?\)/g, '').split('-')[0].trim();
-        const cleanArtist = artist.replace(/ - Topic/g, '').trim();
-        const r = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`);
-        if(!r.ok) return "Lyrics not found in global database.";
-        const d = await r.json();
-        return d.lyrics || "Lyrics not found.";
-    } catch(e) { return "Error connecting to lyrics server."; }
+        const query = `${cleanArtist} ${cleanTitle}`;
+        const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
+        if (r1.ok) {
+            const data = await r1.json();
+            if (data && data.length > 0 && data[0].plainLyrics) return data[0].plainLyrics;
+        }
+    } catch(e) { console.warn("LRCLIB fallback triggered"); }
+
+    // 2nd Try: Lyrics.ovh
+    try {
+        const r2 = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`);
+        if (r2.ok) {
+            const data = await r2.json();
+            if (data.lyrics) return data.lyrics;
+        }
+    } catch(e) { console.warn("Lyrics.ovh fallback triggered"); }
+
+    return "Lyrics not available in open-source databases.";
 };
 
 window.fetchArtistBio = async (artist) => {
+    const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
+
+    // 1st Try: TheAudioDB (Massive bios)
     try {
-        const cleanArtist = artist.replace(/ - Topic/g, '').trim();
-        const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
-        if(!r.ok) return "Artist biography not available.";
-        const d = await r.json();
-        return d.extract || "Artist biography not available.";
-    } catch(e) { return "Error connecting to encyclopedia."; }
+        const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
+        if (r1.ok) {
+            const data = await r1.json();
+            if (data.artists && data.artists[0].strBiographyEN) {
+                let bio = data.artists[0].strBiographyEN;
+                // Cut it off at ~1000 characters so it doesn't break UI
+                if(bio.length > 1000) bio = bio.substring(0, 1000) + "...";
+                return bio;
+            }
+        }
+    } catch(e) {}
+
+    // 2nd Try: Wikipedia Summary (shorter but very consistent)
+    try {
+        const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
+        if (r2.ok) {
+            const data = await r2.json();
+            if (data.extract) return data.extract;
+        }
+    } catch(e) {}
+
+    return "Artist biography not available in databases.";
 };
