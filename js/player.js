@@ -122,10 +122,14 @@ function startProgressTracking() {
             const total = YTP.getDuration();
             if (total > 0) {
                 const percent = (current / total) * 100;
-                document.getElementById('mini-progress').style.width = `${percent}%`;
-                document.getElementById('fp-progress-fill').style.width = `${percent}%`;
-                document.getElementById('fp-time-current').textContent = formatTime(current);
-                document.getElementById('fp-time-total').textContent = formatTime(total);
+                const miniProg = document.getElementById('mini-progress');
+                const fpProg = document.getElementById('fp-progress-fill');
+                const currTime = document.getElementById('fp-time-current');
+                const totTime = document.getElementById('fp-time-total');
+                if(miniProg) miniProg.style.width = `${percent}%`;
+                if(fpProg) fpProg.style.width = `${percent}%`;
+                if(currTime) currTime.textContent = formatTime(current);
+                if(totTime) totTime.textContent = formatTime(total);
             }
         }
     }, 500);
@@ -235,22 +239,31 @@ window.removeFromLiked = (videoId) => {
 };
 
 function updatePlayerUI(track) {
-    document.getElementById('mini-title-el').textContent = track.title;
-    document.getElementById('mini-artist-el').textContent = track.author;
-    document.getElementById('mini-art-el').style.backgroundImage = `url(${track.thumb})`;
-    document.getElementById('mini-art-el').style.backgroundSize = 'cover';
-    
-    document.getElementById('fp-title').textContent = track.title;
-    document.getElementById('fp-artist').innerHTML = `${track.author} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
-    document.getElementById('fp-art').src = track.thumb;
-    document.getElementById('fp-art').style.display = 'block';
+    const els = {
+        mT: document.getElementById('mini-title-el'),
+        mA: document.getElementById('mini-artist-el'),
+        mArt: document.getElementById('mini-art-el'),
+        fT: document.getElementById('fp-title'),
+        fA: document.getElementById('fp-artist'),
+        fArt: document.getElementById('fp-art'),
+        mL: document.getElementById('mini-like-btn'),
+        fL: document.getElementById('fp-like')
+    };
+
+    if(els.mT) els.mT.textContent = track.title;
+    if(els.mA) els.mA.textContent = track.author;
+    if(els.mArt) { els.mArt.style.backgroundImage = `url(${track.thumb})`; els.mArt.style.backgroundSize = 'cover'; }
+    if(els.fT) els.fT.textContent = track.title;
+    if(els.fA) els.fA.innerHTML = `${track.author} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
+    if(els.fArt) { els.fArt.src = track.thumb; els.fArt.style.display = 'block'; }
 
     const isLiked = !!window.OCTAVE.liked[track.videoId];
-    document.getElementById('mini-like-btn').innerHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
-    document.getElementById('fp-like').innerHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
+    const likeHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
+    if(els.mL) els.mL.innerHTML = likeHTML;
+    if(els.fL) els.fL.innerHTML = likeHTML;
     
     if(document.getElementById('playlist-detail-list')) {
-        const activeNav = document.querySelector('.nav-item.active').getAttribute('data-tab');
+        const activeNav = document.querySelector('.nav-item.active')?.getAttribute('data-tab');
         if (activeNav === 'home' || activeNav === 'library') window.renderHome(); 
     }
 }
@@ -262,30 +275,20 @@ window.toggleLike = (track) => {
     if(window.renderHome) window.renderHome();
 };
 
-document.querySelector('.play-btn-mini').addEventListener('click', (e) => { e.stopPropagation(); window.togglePlay(); });
-document.getElementById('fp-play').addEventListener('click', window.togglePlay);
-document.getElementById('fp-next').addEventListener('click', playNextLogic);
-document.getElementById('fp-prev').addEventListener('click', window.playPrev);
-document.getElementById('mini-like-btn').addEventListener('click', (e) => { e.stopPropagation(); if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); });
-document.getElementById('fp-like').addEventListener('click', () => { if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); });
-
 function seekToPosition(e, containerElement) {
-    if (!YTP || window.OCTAVE.currentIndex === -1) return;
+    if (!YTP || window.OCTAVE.currentIndex === -1 || !containerElement) return;
     const rect = containerElement.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const percentage = Math.max(0, Math.min(1, clickX / rect.width));
     const totalTime = YTP.getDuration();
     if (totalTime > 0) {
         YTP.seekTo(totalTime * percentage, true);
-        document.getElementById('fp-progress-fill').style.width = `${percentage * 100}%`;
-        document.getElementById('mini-progress').style.width = `${percentage * 100}%`;
+        const fpFill = document.getElementById('fp-progress-fill');
+        const miniFill = document.getElementById('mini-progress');
+        if(fpFill) fpFill.style.width = `${percentage * 100}%`;
+        if(miniFill) miniFill.style.width = `${percentage * 100}%`;
     }
 }
-document.getElementById('fp-progress-container').addEventListener('click', (e) => seekToPosition(e, document.getElementById('fp-progress-container')));
-document.querySelector('.mini-player').addEventListener('click', (e) => {
-    const rect = document.querySelector('.mini-player').getBoundingClientRect();
-    if (e.clientY - rect.top <= 10) { e.stopPropagation(); seekToPosition(e, document.querySelector('.mini-player')); }
-});
 
 window.performSearch = async (query) => {
     for (let i = 0; i < INVIDIOUS.length; i++) {
@@ -308,23 +311,19 @@ window.setSleepTimer = (minutes) => {
     if(sleepTimerId) clearTimeout(sleepTimerId);
     if(minutes === 0) { 
         alert('Sleep timer cancelled.'); 
-        document.getElementById('timer-modal').classList.remove('active');
+        document.getElementById('timer-modal')?.classList.remove('active');
         return; 
     }
     alert(`Sleep timer set. Audio will pause in ${minutes} minutes.`);
-    document.getElementById('timer-modal').classList.remove('active');
+    document.getElementById('timer-modal')?.classList.remove('active');
     sleepTimerId = setTimeout(() => {
         if(window.OCTAVE.isPlaying) window.togglePlay();
     }, minutes * 60000);
 };
 
-// --- DUAL-FALLBACK API LOGIC FOR LYRICS & BIOS ---
 window.fetchLyrics = async (artist, title) => {
-    // Strip out (Official Video), [HQ], etc for cleaner matches
     const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').split('-')[0].trim();
     const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
-
-    // 1st Try: LRCLIB (Highly reliable open source)
     try {
         const query = `${cleanArtist} ${cleanTitle}`;
         const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
@@ -333,8 +332,6 @@ window.fetchLyrics = async (artist, title) => {
             if (data && data.length > 0 && data[0].plainLyrics) return data[0].plainLyrics;
         }
     } catch(e) { console.warn("LRCLIB fallback triggered"); }
-
-    // 2nd Try: Lyrics.ovh
     try {
         const r2 = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`);
         if (r2.ok) {
@@ -342,28 +339,22 @@ window.fetchLyrics = async (artist, title) => {
             if (data.lyrics) return data.lyrics;
         }
     } catch(e) { console.warn("Lyrics.ovh fallback triggered"); }
-
     return "Lyrics not available in open-source databases.";
 };
 
 window.fetchArtistBio = async (artist) => {
     const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
-
-    // 1st Try: TheAudioDB (Massive bios)
     try {
         const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
         if (r1.ok) {
             const data = await r1.json();
             if (data.artists && data.artists[0].strBiographyEN) {
                 let bio = data.artists[0].strBiographyEN;
-                // Cut it off at ~1000 characters so it doesn't break UI
                 if(bio.length > 1000) bio = bio.substring(0, 1000) + "...";
                 return bio;
             }
         }
     } catch(e) {}
-
-    // 2nd Try: Wikipedia Summary (shorter but very consistent)
     try {
         const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
         if (r2.ok) {
@@ -371,6 +362,29 @@ window.fetchArtistBio = async (artist) => {
             if (data.extract) return data.extract;
         }
     } catch(e) {}
-
     return "Artist biography not available in databases.";
 };
+
+// SAFETY WRAPPER: Attach all click listeners ONLY when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelector('.play-btn-mini')?.addEventListener('click', (e) => { e.stopPropagation(); window.togglePlay(); });
+    document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
+    document.getElementById('fp-next')?.addEventListener('click', playNextLogic);
+    document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
+    
+    document.getElementById('mini-like-btn')?.addEventListener('click', (e) => { 
+        e.stopPropagation(); 
+        if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); 
+    });
+    
+    document.getElementById('fp-like')?.addEventListener('click', () => { 
+        if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); 
+    });
+
+    document.getElementById('fp-progress-container')?.addEventListener('click', (e) => seekToPosition(e, document.getElementById('fp-progress-container')));
+    
+    document.querySelector('.mini-player')?.addEventListener('click', (e) => {
+        const rect = document.querySelector('.mini-player').getBoundingClientRect();
+        if (e.clientY - rect.top <= 10) { e.stopPropagation(); seekToPosition(e, document.querySelector('.mini-player')); }
+    });
+});
