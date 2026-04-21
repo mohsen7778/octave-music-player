@@ -1,7 +1,6 @@
 // ============================================================
 // player.js — Octave IFrame Audio Engine
-// Restored pure client-side YouTube IFrame for instant loading.
-// Features "The Auto-Pause Defense" for seamless background play.
+// Features "The Invisible Video Exploit" for OS-level backgrounding.
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -131,56 +130,38 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
-// ─── SILENT KEEPALIVE ENGINE ──────────────────────────────────────────────────
-let _audioCtx = null;
-let _silentNode = null;
+// ─── THE INVISIBLE VIDEO EXPLOIT (NO-SLEEP HACK) ──────────────────────────────
+let _nosleepVideo = null;
 
-function startSilentKeepAlive() {
-    if (_silentNode) return; 
+function startNoSleepVideo() {
+    if (_nosleepVideo) return; 
     try {
-        _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        _audioCtx.onstatechange = () => {
-            if (_audioCtx && _audioCtx.state === 'suspended') {
-                _audioCtx.resume();
-            }
-        };
-
-        const buffer = _audioCtx.createBuffer(1, _audioCtx.sampleRate, _audioCtx.sampleRate);
-        const source = _audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.loop = true;
-        source.connect(_audioCtx.destination);
-        source.start(0);
-        _silentNode = source;
+        _nosleepVideo = document.createElement('video');
+        _nosleepVideo.setAttribute('playsinline', 'true');
+        _nosleepVideo.setAttribute('muted', 'true');
+        _nosleepVideo.setAttribute('loop', 'true');
+        _nosleepVideo.style.cssText = 'position:fixed; width:1px; height:1px; bottom:0; right:0; opacity:0; pointer-events:none; z-index:-999;';
+        
+        // Base64 string of a tiny, silent dummy video
+        _nosleepVideo.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMQAAAAx8bWRhdAAAAAAABXhtb292AAAAbG12aGQAAAAAAM1r2QDNa9kAAQAAACQAAwEAAAAAAAEAAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAACx0cmFrAAAAXHRraGQAAAAzAADNa9kAzWvZAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAA';
+        
+        document.body.appendChild(_nosleepVideo);
+        _nosleepVideo.play().catch(e => console.warn('No-sleep video blocked:', e));
     } catch (e) {
-        console.warn('Silent keepalive failed to start:', e);
+        console.warn('Silent video hack failed to start:', e);
     }
 }
 
-// 10% FIX: Lock the audio instantly on the very first tap anywhere on the screen
-document.addEventListener('click', startSilentKeepAlive, { once: true });
-document.addEventListener('touchstart', startSilentKeepAlive, { once: true });
-
-function stopSilentKeepAlive() {
-    try {
-        if (_audioCtx) _audioCtx.onstatechange = null;
-        if (_silentNode) { _silentNode.stop(); _silentNode = null; }
-        if (_audioCtx) { _audioCtx.close(); _audioCtx = null; }
-    } catch (e) {}
-}
-
-function resumeAudioContext() {
-    if (_audioCtx && _audioCtx.state === 'suspended') {
-        _audioCtx.resume();
-    }
-}
+// Lock the video loop instantly on the very first tap anywhere on the screen
+document.addEventListener('click', startNoSleepVideo, { once: true });
+document.addEventListener('touchstart', startNoSleepVideo, { once: true });
 
 // ─── IFRAME ENGINE ────────────────────────────────────────────────────────────
 let YTP = null,
     ytReady = false,
     progressTimer = null,
     sleepTimerId = null,
-    isMediaSessionPause = false; // Tracks if the user intentionally pressed pause
+    isMediaSessionPause = false;
 
 const script = document.createElement('script');
 script.src = 'https://www.youtube.com/iframe_api';
@@ -217,24 +198,18 @@ function onYTS(e) {
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
         startProgressTracking();
-        startSilentKeepAlive();   
-        resumeAudioContext();
         syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
         
-        // THE 10% FIX: The Auto-Pause Defense
-        // If the document is hidden and the user didn't press the notification pause button, 
-        // it means Chrome is trying to kill our background audio. Force it back on instantly!
         if (document.hidden && !isMediaSessionPause) {
             console.log("Defeating Chrome auto-pause...");
             YTP.playVideo();
-            return; // Skip the rest of the pause logic
+            return; 
         }
 
         window.OCTAVE.isPlaying = false;
         updatePlayIcons('fa-solid fa-play');
         clearInterval(progressTimer);
-        stopSilentKeepAlive();    
     } else if (e.data === YT.PlayerState.ENDED) {
         window.OCTAVE.isPlaying = false;
         
@@ -258,7 +233,6 @@ function updatePlayIcons(iconClass) {
 
 window.togglePlay = () => {
     if (!YTP || window.OCTAVE.currentIndex === -1) return;
-    resumeAudioContext(); 
     window.OCTAVE.isPlaying ? YTP.pauseVideo() : YTP.playVideo();
 };
 
@@ -308,11 +282,9 @@ function updateMediaSession(track) {
 
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     
-    // 10% FIX: We set a flag so the app knows the user INTENTIONALLY paused it
     navigator.mediaSession.setActionHandler('pause', () => { 
         isMediaSessionPause = true;
         window.togglePlay(); 
-        // Reset the flag after half a second
         setTimeout(() => isMediaSessionPause = false, 500);
     });
     
@@ -749,7 +721,6 @@ window.fetchFullArtistProfile = async (artist) => {
 
 document.addEventListener('DOMContentLoaded', () => {
     
-    // Restores last played track UI and audio cue on startup
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         updatePlayerUI(track);
