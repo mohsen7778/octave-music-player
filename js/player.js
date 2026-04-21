@@ -1,7 +1,7 @@
 // ============================================================
 // player.js — Octave Native Audio Engine
 // YouTube IFrame completely removed.
-// Uses HTML5 <audio> + Invidious /latest_version proxy streams.
+// Uses HTML5 <audio> + Direct Invidious CDN streams for instant speed.
 // Background play works on Chrome, Safari, and Brave.
 // ============================================================
 
@@ -134,6 +134,7 @@ let progressTimer = null;
 let sleepTimerId = null;
 let streamQueue = [];   
 let streamQueueIdx = 0;
+let streamTimeout = null;
 
 // ── Safari / iOS AudioContext unlock ─────────────────────────────────────────
 let audioUnlocked = false;
@@ -157,26 +158,52 @@ document.addEventListener('touchstart', unlockAudioForSafari, { once: true });
 function buildStreamQueue(videoId) {
     const itags = [140, 251, 18];
     const urls = [];
-    window.INVIDIOUS.forEach(base => {
+    // Start at the randomized index to distribute load
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         itags.forEach(itag => {
-            urls.push(`${base}/latest_version?id=${videoId}&itag=${itag}&local=true`);
+            // REMOVED local=true so it streams instantly direct from Google's CDN
+            urls.push(`${base}/latest_version?id=${videoId}&itag=${itag}`);
         });
-    });
+    }
     return urls;
 }
 
-// ── Load + play a videoId ─────────────────────────────────────────────────────
+// ── Load + play a videoId with Aggressive Timeout ─────────────────────────────
 window.loadAndPlay = (videoId) => {
     AUDIO.pause();
     streamQueue = buildStreamQueue(videoId);
     streamQueueIdx = 0;
-    AUDIO.src = streamQueue[0];
-    AUDIO.load();
-    AUDIO.play().catch(() => {});
+    
+    const tryNextStream = () => {
+        clearTimeout(streamTimeout);
+        if (streamQueueIdx >= streamQueue.length) {
+            console.warn('Octave: All stream sources failed.');
+            updatePlayIcons('fa-solid fa-play');
+            window.OCTAVE.isPlaying = false;
+            return;
+        }
+        
+        AUDIO.src = streamQueue[streamQueueIdx];
+        AUDIO.load();
+        AUDIO.play().catch(() => {});
+        
+        // If the server takes longer than 4 seconds to start playing, skip it
+        streamTimeout = setTimeout(() => {
+            if (!window.OCTAVE.isPlaying) {
+                console.warn('Stream too slow, skipping to next server...');
+                streamQueueIdx++;
+                tryNextStream();
+            }
+        }, 4000);
+    };
+    
+    tryNextStream();
 };
 
 // ── Audio event handlers ──────────────────────────────────────────────────────
 AUDIO.addEventListener('playing', () => {
+    clearTimeout(streamTimeout); // It started playing, cancel the timeout
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     startProgressTracking();
@@ -202,11 +229,19 @@ AUDIO.addEventListener('ended', () => {
 });
 
 AUDIO.addEventListener('error', () => {
+    clearTimeout(streamTimeout);
     streamQueueIdx++;
     if (streamQueueIdx < streamQueue.length) {
         AUDIO.src = streamQueue[streamQueueIdx];
         AUDIO.load();
         AUDIO.play().catch(() => {});
+        
+        streamTimeout = setTimeout(() => {
+            if (!window.OCTAVE.isPlaying) {
+                streamQueueIdx++;
+                AUDIO.dispatchEvent(new Event('error'));
+            }
+        }, 4000);
     } else {
         console.warn('Octave: All stream sources failed for this track.');
         updatePlayIcons('fa-solid fa-play');
@@ -562,7 +597,7 @@ window.fetchLyrics = async (artist, title) => {
                         html += `<div class="lyric-line">${window.escapeHTML(line)}</div>`;
                     });
                     html += '</div>';
-                    return html; // PATCHED FIX: Returns just the HTML string as app.js expects
+                    return html;
                 }
             }
         }
