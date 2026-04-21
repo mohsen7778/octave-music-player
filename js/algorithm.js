@@ -23,7 +23,6 @@ window.playNextLogic = async () => {
                     const d = await r.json();
                     if (d.recommendedVideos && d.recommendedVideos.length > 0) {
                         const recentIds = window.OCTAVE.recentPlayed.slice(0, 15).map(t => t.videoId);
-                        // STRICT 10-MINUTE FILTER
                         let freshRecs = d.recommendedVideos.filter(v => !recentIds.includes(v.videoId) && v.lengthSeconds && v.lengthSeconds < 600);
                         if (freshRecs.length === 0) freshRecs = d.recommendedVideos.filter(v => v.lengthSeconds && v.lengthSeconds < 600);
                         
