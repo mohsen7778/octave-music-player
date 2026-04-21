@@ -498,10 +498,10 @@ window.fetchLyrics = async (artist, title) => {
     return { isSynced: false, html: "Lyrics not available in open-source databases." };
 };
 
-// --- UPGRADED: Artist Profile Fetcher ---
-window.fetchArtistProfileData = async (artist) => {
+// --- NEW FETCH FULL ARTIST PROFILE ENGINE ---
+window.fetchFullArtistProfile = async (artist) => {
     const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
-    let profile = { name: cleanArtist, bio: "Biography not available in open-source databases.", banner: "", topTracks: [] };
+    let profile = { name: cleanArtist, bio: "Artist biography not available in databases.", banner: "", tracks: [] };
 
     try {
         const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
@@ -510,14 +510,17 @@ window.fetchArtistProfileData = async (artist) => {
             if (data.artists && data.artists[0]) {
                 const art = data.artists[0];
                 if (art.strBiographyEN) {
-                    profile.bio = art.strBiographyEN.length > 1000 ? art.strBiographyEN.substring(0, 1000) + "..." : art.strBiographyEN;
+                    let bio = art.strBiographyEN;
+                    if(bio.length > 1000) bio = bio.substring(0, 1000) + "...";
+                    profile.bio = bio;
                 }
-                profile.banner = art.strArtistBanner || art.strArtistFanart || art.strArtistThumb || "";
+                if (art.strArtistFanart) profile.banner = art.strArtistFanart;
+                else if (art.strArtistThumb) profile.banner = art.strArtistThumb;
             }
         }
     } catch(e) {}
-
-    if (profile.bio.includes("not available")) {
+    
+    if (profile.bio === "Artist biography not available in databases.") {
         try {
             const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
             if (r2.ok) {
@@ -527,12 +530,23 @@ window.fetchArtistProfileData = async (artist) => {
         } catch(e) {}
     }
 
-    try {
-        // Rip the top 5 official tracks using the built-in dynamic search!
-        const results = await window.performSearch(`${cleanArtist} official music`);
-        profile.topTracks = results.slice(0, 5);
-    } catch(e) {}
-
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        try {
+            const r3 = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(cleanArtist)}&type=video&sort_by=view_count&fields=videoId,title,author,videoThumbnails`, { signal: AbortSignal.timeout(7000) });
+            if (r3.ok) {
+                const d = await r3.json();
+                if (d && d.length > 0) {
+                    profile.tracks = d.slice(0, 10).map(item => ({
+                        videoId: item.videoId, title: item.title, author: item.author,
+                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+                    }));
+                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+                    break;
+                }
+            }
+        } catch(e) { continue; }
+    }
     return profile;
 };
 
