@@ -366,6 +366,7 @@ window.removeFromLiked = (videoId) => {
     if (window.renderLikedSongs) window.renderLikedSongs();
 };
 
+// OVERHAULED LIQUID SHADOW (VIBRANT & SHARP)
 window.applyLiquidShadow = (imageSrc) => {
     if (!document.getElementById('liquid-keyframes')) {
         const style = document.createElement('style');
@@ -388,21 +389,41 @@ window.applyLiquidShadow = (imageSrc) => {
         canvas.height = img.height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0);
+        
         try {
+            // Sampling average of a 5x5 center grid for better color representation
             const cx = Math.floor(img.width / 2);
             const cy = Math.floor(img.height / 2);
-            const data = ctx.getImageData(cx, cy, 1, 1).data;
-
-            const r = data[0],
-                g = data[1],
-                b = data[2];
+            const sampleSize = 5;
+            const startX = Math.max(0, cx - 2);
+            const startY = Math.max(0, cy - 2);
+            const imageData = ctx.getImageData(startX, startY, sampleSize, sampleSize).data;
+            
+            let r = 0, g = 0, b = 0, count = 0;
+            for(let i=0; i < imageData.length; i+=4) {
+                // Ignore overly dark pixels to maximize "released color" intent
+                if(imageData[i] > 10 || imageData[i+1] > 10 || imageData[i+2] > 10) {
+                    r += imageData[i];
+                    g += imageData[i+1];
+                    b += imageData[i+2];
+                    count++;
+                }
+            }
+            
+            // Fallback if the whole center is pitch black
+            if(count === 0) {
+                r = imageData[0]; g = imageData[1]; b = imageData[2];
+            } else {
+                r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
+            }
 
             const fpPlayer = document.getElementById('full-player');
             if (fpPlayer) {
+                // FIX: DECREASE BLUR (Tighter stops), RELEASE MORE COLOR (High Opacity)
                 fpPlayer.style.background = `
-                    radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.25) 0%, transparent 50%),
-                    radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.25) 0%, transparent 50%),
-                    radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.15) 0%, transparent 60%),
+                    radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.8) 0%, transparent 40%),
+                    radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.7) 0%, transparent 40%),
+                    radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.6) 0%, transparent 50%),
                     var(--bg-deep)
                 `;
                 fpPlayer.style.backgroundSize = "200% 200%";
@@ -411,18 +432,19 @@ window.applyLiquidShadow = (imageSrc) => {
 
             const fpArt = document.getElementById('fp-art');
             if (fpArt) {
-                fpArt.style.boxShadow = `0 30px 60px rgba(0,0,0,0.6), 0 0 40px rgba(${r}, ${g}, ${b}, 0.3)`;
+                // FIX: DECREASE BLUR (Spread 15px), RELEASE MORE COLOR (Opacity 1, 0.8)
+                fpArt.style.boxShadow = `0 15px 30px rgba(0,0,0,0.5), 0 0 10px rgba(${r}, ${g}, ${b}, 1), 0 0 15px rgba(${r}, ${g}, ${b}, 0.8)`;
             }
 
             const mini = document.querySelector('.mini-player');
             if (mini) {
-                mini.style.background = `
-                    radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.15) 0%, transparent 70%),
-                    var(--glass-bg)
-                `;
-                mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 20px rgba(${r}, ${g}, ${b}, 0.15)`;
+                // VIBRANT MINI PLAYER BLEND
+                mini.style.background = `radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.3) 0%, transparent 70%), var(--glass-bg)`;
+                mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 15px rgba(${r}, ${g}, ${b}, 0.3)`;
             }
-        } catch (e) {}
+        } catch (e) {
+            console.error("Liquid Shadow Sampling Failed", e);
+        }
     };
     img.src = imageSrc;
 };
@@ -576,13 +598,17 @@ window.fetchLyrics = async (artist, title) => {
     return `<div style="text-align:center; padding: 40px; color: var(--text-secondary);">Lyrics not found for this track.</div>`;
 };
 
+// BULLETPROOF ARTIST PROFILE FETCH
 window.fetchFullArtistProfile = async (artist) => {
+    
+    // BUG FIX 1: Aggressively strip collab names to find the core artist
     const cleanArtist = artist
         .replace(/ - Topic/gi, '')
         .replace(/VEVO/gi, '')
         .split(/,|&| ft\.| feat\.| x | with /i)[0]
         .trim();
     
+    // BUG FIX 2: Cache Bypass (Nuke the corrupted cache if it failed previously)
     if (window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanArtist]) {
         if (window.OCTAVE.artistCache[cleanArtist].bio !== "Artist biography not available.") {
             return window.OCTAVE.artistCache[cleanArtist];
@@ -598,6 +624,7 @@ window.fetchFullArtistProfile = async (artist) => {
         tracks: []
     };
 
+    // Try AudioDB first for the Banner Image
     try {
         const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
         if (r1.ok) {
@@ -611,8 +638,10 @@ window.fetchFullArtistProfile = async (artist) => {
         }
     } catch (e) {}
     
+    // BUG FIX 3: Ultimate Wikipedia API with Auto-Redirects
     if (profile.bio === "Artist biography not available.") {
         try {
+            // Method A: Direct Wikipedia Summary (Fastest)
             const w1 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
             if (w1.ok) {
                 const d1 = await w1.json();
@@ -621,6 +650,7 @@ window.fetchFullArtistProfile = async (artist) => {
                 }
             }
             
+            // Method B: Wikipedia Search Query (Handles redirects, caps, and fuzziness)
             if (profile.bio === "Artist biography not available.") {
                 const w2 = await fetch(`https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(cleanArtist)}&origin=*`);
                 if (w2.ok) {
@@ -635,6 +665,7 @@ window.fetchFullArtistProfile = async (artist) => {
         } catch (e) {}
     }
 
+    // Fetch Top Tracks
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         const controller = new AbortController();
@@ -662,6 +693,7 @@ window.fetchFullArtistProfile = async (artist) => {
         }
     }
     
+    // Save to Cache
     if (!window.OCTAVE.artistCache) window.OCTAVE.artistCache = {};
     window.OCTAVE.artistCache[cleanArtist] = profile;
     window.saveCache();
