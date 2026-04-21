@@ -54,7 +54,14 @@ No servers no database no authentication system. Pure frontend architecture.
 ### Smart Music Engine
 - Intelligent shuffle based on listening patterns  
 - Auto generated recommendations  
-- Continuous playback system  
+- Continuous playback system
+
+
+## Background Playback
+
+Octave supports reliable background playback in Brave Browser.
+Most mobile browsers pause audio when the tab is not active. Brave handles background audio correctly.
+If background listening matters to you, use Brave Browser.
 
 ### Modern UI
 - Glassmorphism design  
