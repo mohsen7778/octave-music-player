@@ -125,6 +125,7 @@ const fpTitle = document.getElementById('fp-overlay-title');
 
 document.getElementById('close-fp-overlay').addEventListener('click', () => fpPanel.classList.remove('active'));
 
+// ELEGANT LYRICS WITH FONT PICKER
 document.getElementById('fp-lyrics-btn').addEventListener('click', async () => {
     if(window.OCTAVE.currentIndex < 0) return;
     fpTitle.innerText = 'Lyrics';
@@ -134,12 +135,41 @@ document.getElementById('fp-lyrics-btn').addEventListener('click', async () => {
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     const result = await window.fetchLyrics(track.author, track.title);
     
-    if (result.isSynced) {
-        fpContent.innerHTML = `<div id="lyrics-content">${result.html}</div>`;
-    } else {
-        fpContent.innerHTML = `<div id="lyrics-content" style="white-space: pre-wrap; text-align: center; color: var(--text-primary); font-size: 15px; line-height: 1.8;">${result.html}</div>`;
-    }
+    const fonts = [
+        { name: 'Modern', css: 'Plus Jakarta Sans' },
+        { name: 'Clean', css: 'Inter' },
+        { name: 'Classic', css: 'Lora' },
+        { name: 'Elegant', css: 'Playfair Display' },
+        { name: 'Bold', css: 'Montserrat' },
+        { name: 'Heavy', css: 'Kanit' },
+        { name: 'Typewriter', css: 'Roboto Mono' },
+        { name: 'Cursive', css: 'Dancing Script' },
+        { name: 'Sharp', css: 'Oswald' },
+        { name: 'Impact', css: 'Bebas Neue' }
+    ];
+
+    let fontHeader = `<div class="lyrics-font-selector scroll-x">`;
+    fonts.forEach(f => {
+        const activeClass = window.OCTAVE.selectedFont === f.css ? 'active' : '';
+        fontHeader += `<div class="font-option ${activeClass}" style="font-family: '${f.css}', sans-serif;" onclick="window.setLyricsFont('${f.css}', this)">${f.name}</div>`;
+    });
+    fontHeader += `</div>`;
+
+    fpContent.innerHTML = fontHeader + `<div id="lyrics-content">${result.html}</div>`;
 });
+
+window.setLyricsFont = (fontCss, el) => {
+    window.OCTAVE.selectedFont = fontCss;
+    localStorage.setItem('octave_font', fontCss);
+    
+    // Update active UI
+    document.querySelectorAll('.font-option').forEach(opt => opt.classList.remove('active'));
+    el.classList.add('active');
+    
+    // Apply font to lyrics
+    const container = document.getElementById('lyrics-content');
+    if(container) container.firstChild.style.fontFamily = `'${fontCss}', sans-serif`;
+};
 
 window.renderArtistPage = async (artistName) => {
     document.getElementById('full-player').classList.remove('active');
@@ -246,7 +276,6 @@ if (fpOptionsBtn) {
     });
 }
 
-// TURBO-SYNC WITH DOUBLE RETRY
 window.fetchTrendingMusic = async () => {
     const grid = document.getElementById('home-trending-grid');
     if (!grid) return;
@@ -281,11 +310,9 @@ window.fetchTrendingMusic = async () => {
             const artist = item['im:artist'].label;
             const query = encodeURIComponent(artist + ' ' + title);
 
-            // TRY #1
             let base = window.INVIDIOUS[Math.floor(Math.random() * window.INVIDIOUS.length)];
             let res = await tryFetch(base, query);
             
-            // TRY #2 (Retry if #1 failed)
             if (!res) {
                 base = window.INVIDIOUS[Math.floor(Math.random() * window.INVIDIOUS.length)];
                 res = await tryFetch(base, query);
@@ -313,7 +340,6 @@ window.fetchTrendingMusic = async () => {
             } catch(e) { return null; }
         };
 
-        // Batch process 5 tracks at a time for efficiency
         for (let i = 0; i < items.length; i += 5) {
             const batch = items.slice(i, i + 5);
             const results = await Promise.all(batch.map(item => fetchTrackWithRetry(item)));
@@ -321,7 +347,6 @@ window.fetchTrendingMusic = async () => {
         }
 
         if (trendingTracks.length > 0) {
-            // ONLY SAVE 3-DAY CACHE IF AT LEAST 20 SONGS WERE FOUND
             if (trendingTracks.length >= 20) {
                 window.OCTAVE.trendingData = { timestamp: now, tracks: trendingTracks };
                 window.saveCache();
