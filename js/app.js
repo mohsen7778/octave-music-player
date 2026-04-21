@@ -246,7 +246,7 @@ if (fpOptionsBtn) {
     });
 }
 
-// TURBO-SYNC TRENDING ENGINE
+// TURBO-SYNC WITH DOUBLE RETRY
 window.fetchTrendingMusic = async () => {
     const grid = document.getElementById('home-trending-grid');
     if (!grid) return;
@@ -276,42 +276,57 @@ window.fetchTrendingMusic = async () => {
         const trendingTracks = [];
         let count = 0;
 
-        // FETCH IN PARALLEL BATCHES FOR TURBO TESTING
-        const fetchTrack = async (item) => {
+        const fetchTrackWithRetry = async (item) => {
             const title = item['im:name'].label;
             const artist = item['im:artist'].label;
-            
-            // Randomize instance for EVERY request to avoid rate limits
-            const base = window.INVIDIOUS[Math.floor(Math.random() * window.INVIDIOUS.length)];
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            const query = encodeURIComponent(artist + ' ' + title);
 
+            // TRY #1
+            let base = window.INVIDIOUS[Math.floor(Math.random() * window.INVIDIOUS.length)];
+            let res = await tryFetch(base, query);
+            
+            // TRY #2 (Retry if #1 failed)
+            if (!res) {
+                base = window.INVIDIOUS[Math.floor(Math.random() * window.INVIDIOUS.length)];
+                res = await tryFetch(base, query);
+            }
+
+            if (res) {
+                count++;
+                grid.innerHTML = `<div style="color: var(--text-secondary); font-size: 13px;"><i class="fa-solid fa-spinner fa-spin"></i> Turbo Syncing: ${count}/50 Hits</div>`;
+            }
+            return res;
+        };
+
+        const tryFetch = async (base, query) => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4500);
             try {
-                const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(artist + ' ' + title)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, { signal: controller.signal });
+                const r = await fetch(`${base}/api/v1/search?q=${query}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, { signal: controller.signal });
                 clearTimeout(timeoutId);
                 const d = await r.json();
                 const best = d.find(v => v.lengthSeconds && v.lengthSeconds < 600);
-                if (best) {
-                    count++;
-                    grid.innerHTML = `<div style="color: var(--text-secondary); font-size: 13px;"><i class="fa-solid fa-spinner fa-spin"></i> Syncing Hits: ${count}/50</div>`;
-                    return {
-                        videoId: best.videoId, title: best.title, author: best.author,
-                        thumb: (best.videoThumbnails && best.videoThumbnails.length > 0) ? best.videoThumbnails[0].url : ''
-                    };
-                }
+                return best ? {
+                    videoId: best.videoId, title: best.title, author: best.author,
+                    thumb: (best.videoThumbnails && best.videoThumbnails.length > 0) ? best.videoThumbnails[0].url : ''
+                } : null;
             } catch(e) { return null; }
         };
 
-        // Batch process 5 tracks at a time
+        // Batch process 5 tracks at a time for efficiency
         for (let i = 0; i < items.length; i += 5) {
             const batch = items.slice(i, i + 5);
-            const results = await Promise.all(batch.map(item => fetchTrack(item)));
+            const results = await Promise.all(batch.map(item => fetchTrackWithRetry(item)));
             results.forEach(res => { if(res) trendingTracks.push(res); });
         }
 
         if (trendingTracks.length > 0) {
-            window.OCTAVE.trendingData = { timestamp: now, tracks: trendingTracks };
-            window.saveCache();
+            // ONLY SAVE 3-DAY CACHE IF AT LEAST 20 SONGS WERE FOUND
+            if (trendingTracks.length >= 20) {
+                window.OCTAVE.trendingData = { timestamp: now, tracks: trendingTracks };
+                window.saveCache();
+            }
+            
             grid.innerHTML = '';
             trendingTracks.forEach(track => {
                 const el = document.createElement('div');
@@ -321,7 +336,7 @@ window.fetchTrendingMusic = async () => {
                 grid.appendChild(el);
             });
         } else {
-            grid.innerHTML = '<div style="color: var(--text-secondary); font-size: 13px;">Charts unavailable.</div>';
+            grid.innerHTML = '<div style="color: var(--text-secondary); font-size: 13px;">Charts currently busy. Refresh to retry.</div>';
         }
     } catch(e) {
         grid.innerHTML = '<div style="color: var(--text-secondary); font-size: 13px;">Charts unavailable.</div>';
