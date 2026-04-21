@@ -132,6 +132,44 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
+// ─── SILENT KEEPALIVE ENGINE ──────────────────────────────────────────────────
+// Holds the browser audio session open via Web Audio API so the YouTube iframe
+// continues playing in the background on Chrome Android / mobile browsers.
+let _audioCtx = null;
+let _silentNode = null;
+
+function startSilentKeepAlive() {
+    if (_silentNode) return; // already running
+    try {
+        _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const buffer = _audioCtx.createBuffer(1, _audioCtx.sampleRate, _audioCtx.sampleRate);
+        // Buffer stays all zeros — truly silent
+        const source = _audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        source.connect(_audioCtx.destination);
+        source.start(0);
+        _silentNode = source;
+    } catch (e) {
+        console.warn('Silent keepalive failed to start:', e);
+    }
+}
+
+function stopSilentKeepAlive() {
+    try {
+        if (_silentNode) { _silentNode.stop(); _silentNode = null; }
+        if (_audioCtx) { _audioCtx.close(); _audioCtx = null; }
+    } catch (e) {}
+}
+
+// Web Audio Context must be resumed after a user gesture (browser policy).
+// We hook into the first real play action to activate it.
+function resumeAudioContext() {
+    if (_audioCtx && _audioCtx.state === 'suspended') {
+        _audioCtx.resume();
+    }
+}
+
 // ─── IFRAME ENGINE ────────────────────────────────────────────────────────────
 let YTP = null,
     ytReady = false,
@@ -174,11 +212,14 @@ function onYTS(e) {
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
         startProgressTracking();
+        startSilentKeepAlive();   // 🔇 hold audio session open for background play
+        resumeAudioContext();
         syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
         window.OCTAVE.isPlaying = false;
         updatePlayIcons('fa-solid fa-play');
         clearInterval(progressTimer);
+        stopSilentKeepAlive();    // 🔇 release audio session when paused
     } else if (e.data === YT.PlayerState.ENDED) {
         window.OCTAVE.isPlaying = false;
         
@@ -202,6 +243,7 @@ function updatePlayIcons(iconClass) {
 
 window.togglePlay = () => {
     if (!YTP || window.OCTAVE.currentIndex === -1) return;
+    resumeAudioContext(); // ensure AudioContext is live on user gesture
     window.OCTAVE.isPlaying ? YTP.pauseVideo() : YTP.playVideo();
 };
 
