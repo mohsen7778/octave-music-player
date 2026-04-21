@@ -505,7 +505,7 @@ window.fetchLyrics = async (artist, title) => {
     const cleanArtist = artist
         .replace(/ - Topic/gi, '')
         .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| with /i)[0]
+        .split(/,|&| ft\.| feat\.| x | with /i)[0]
         .trim();
 
     try {
@@ -538,14 +538,22 @@ window.fetchLyrics = async (artist, title) => {
     return `<div style="text-align:center; padding: 40px; color: var(--text-secondary);">Lyrics not found for this track.</div>`;
 };
 
+// BULLETPROOF ARTIST PROFILE FETCH
 window.fetchFullArtistProfile = async (artist) => {
-    const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
     
-    // CACHE BYPASS: If the saved cache says "Not available", ignore it and fetch fresh
+    // BUG FIX 1: Aggressively strip collab names to find the core artist
+    const cleanArtist = artist
+        .replace(/ - Topic/gi, '')
+        .replace(/VEVO/gi, '')
+        .split(/,|&| ft\.| feat\.| x | with /i)[0]
+        .trim();
+    
+    // BUG FIX 2: Cache Bypass (Nuke the corrupted cache if it failed previously)
     if (window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanArtist]) {
-        const cachedProfile = window.OCTAVE.artistCache[cleanArtist];
-        if (cachedProfile.bio !== "Artist biography not available.") {
-            return cachedProfile;
+        if (window.OCTAVE.artistCache[cleanArtist].bio !== "Artist biography not available.") {
+            return window.OCTAVE.artistCache[cleanArtist];
+        } else {
+            delete window.OCTAVE.artistCache[cleanArtist];
         }
     }
 
@@ -556,6 +564,7 @@ window.fetchFullArtistProfile = async (artist) => {
         tracks: []
     };
 
+    // Try AudioDB first for the Banner Image
     try {
         const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
         if (r1.ok) {
@@ -569,25 +578,34 @@ window.fetchFullArtistProfile = async (artist) => {
         }
     } catch (e) {}
     
-    // WIKIPEDIA FALLBACK
+    // BUG FIX 3: Ultimate Wikipedia API with Auto-Redirects
     if (profile.bio === "Artist biography not available.") {
         try {
-            const r2 = await fetch(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(cleanArtist)}&limit=1&origin=*`);
-            if (r2.ok) {
-                const searchData = await r2.json();
-                if (searchData[2] && searchData[2][0] && !searchData[2][0].includes("may refer to")) {
-                    profile.bio = searchData[2][0];
-                } else {
-                    const r3 = await fetch(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(cleanArtist + " musician")}&limit=1&origin=*`);
-                    const searchData2 = await r3.json();
-                    if (searchData2[2] && searchData2[2][0]) {
-                        profile.bio = searchData2[2][0];
+            // Method A: Direct Wikipedia Summary (Fastest)
+            const w1 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
+            if (w1.ok) {
+                const d1 = await w1.json();
+                if (d1.extract && !d1.extract.includes("may refer to")) {
+                    profile.bio = d1.extract;
+                }
+            }
+            
+            // Method B: Wikipedia Search Query (Handles redirects, caps, and fuzziness)
+            if (profile.bio === "Artist biography not available.") {
+                const w2 = await fetch(`https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(cleanArtist)}&origin=*`);
+                if (w2.ok) {
+                    const d2 = await w2.json();
+                    const pages = d2.query.pages;
+                    const pageId = Object.keys(pages)[0];
+                    if (pageId !== "-1" && pages[pageId].extract && !pages[pageId].extract.includes("may refer to")) {
+                        profile.bio = pages[pageId].extract;
                     }
                 }
             }
         } catch (e) {}
     }
 
+    // Fetch Top Tracks
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         const controller = new AbortController();
