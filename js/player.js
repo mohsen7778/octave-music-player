@@ -104,7 +104,6 @@ window.onYouTubeIframeAPIReady = () => {
         events: {
             onReady: e => { 
                 ytReady = true; e.target.setVolume(100);
-                
                 if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
                     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
                     updatePlayerUI(track);
@@ -145,7 +144,6 @@ window.togglePlay = () => {
     window.OCTAVE.isPlaying ? YTP.pauseVideo() : YTP.playVideo();
 };
 
-// OVERHAULED SYNC ENGINE (Smooth manual scroll + Zero blackout)
 function startProgressTracking() {
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
@@ -163,36 +161,6 @@ function startProgressTracking() {
                 if(currTime) currTime.textContent = formatTime(current);
                 if(totTime) totTime.textContent = formatTime(total);
             }
-
-            const lyricsView = document.getElementById('fp-overlay-panel');
-            const isLyricsActive = lyricsView && lyricsView.classList.contains('active');
-
-            if (window.activeSyncedLyrics && isLyricsActive && document.getElementById('lyrics-content')) {
-                const container = document.getElementById('lyrics-content');
-                let activeIdx = -1;
-                for (let i = 0; i < window.activeSyncedLyrics.length; i++) {
-                    if (current >= window.activeSyncedLyrics[i].time) activeIdx = i;
-                    else break;
-                }
-                
-                if (activeIdx !== -1 && activeIdx !== window.lastLyricIdx) {
-                    window.lastLyricIdx = activeIdx;
-                    const children = Array.from(container.children);
-                    children.forEach((child, idx) => {
-                        if (idx === activeIdx) {
-                            child.className = 'lyric-line active';
-                            // Smoother scroll: only scroll if the user isn't currently touching the screen
-                            if (!window.isUserScrollingLyrics) {
-                                child.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }
-                        } else if (idx < activeIdx) {
-                            child.className = 'lyric-line passed';
-                        } else {
-                            child.className = 'lyric-line';
-                        }
-                    });
-                }
-            }
         }
     }, 100); 
 }
@@ -206,25 +174,19 @@ function formatTime(seconds) {
 
 function updateMediaSession(track) {
     if (!('mediaSession' in navigator)) return;
-    
     navigator.mediaSession.metadata = new MediaMetadata({
-        title: track.title, 
-        artist: track.author,
+        title: track.title, artist: track.author,
         artwork:[
             { src: track.thumb, sizes: '96x96', type: 'image/jpeg' },
             { src: track.thumb, sizes: '128x128', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '192x192', type: 'image/jpeg' },
             { src: track.thumb, sizes: '256x256', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '384x384', type: 'image/jpeg' },
             { src: track.thumb, sizes: '512x512', type: 'image/jpeg' }
         ]
     });
-
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('nexttrack', () => { if(window.playNextLogic) window.playNextLogic(); });
     navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
-    
     try {
         navigator.mediaSession.setActionHandler('seekto', (details) => {
             if (YTP && typeof YTP.seekTo === 'function') {
@@ -241,11 +203,7 @@ function syncMediaSessionPosition() {
             const duration = YTP.getDuration();
             const position = YTP.getCurrentTime();
             if (duration > 0) {
-                navigator.mediaSession.setPositionState({
-                    duration: duration,
-                    playbackRate: 1,
-                    position: position
-                });
+                navigator.mediaSession.setPositionState({ duration: duration, playbackRate: 1, position: position });
             }
         } catch(e) {}
     }
@@ -255,14 +213,11 @@ window.playTrackByIndex = (index) => {
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     window.OCTAVE.currentIndex = index;
     const track = window.OCTAVE.queue[index];
-    
     window.OCTAVE.playStats[track.videoId] = (window.OCTAVE.playStats[track.videoId] || 0) + 1;
     window.OCTAVE.recentPlayed =[track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
     window.saveCache();
-    
     updatePlayerUI(track);
     if (ytReady && YTP) YTP.loadVideoById({ videoId: track.videoId });
-    
     updateMediaSession(track);
 };
 
@@ -317,47 +272,28 @@ window.applyLiquidShadow = (imageSrc) => {
         `;
         document.head.appendChild(style);
     }
-
     const img = new Image();
     img.crossOrigin = "Anonymous";
     img.onload = () => {
         const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
+        canvas.width = img.width; canvas.height = img.height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0);
         try {
             const cx = Math.floor(img.width / 2);
             const cy = Math.floor(img.height / 2);
             const data = ctx.getImageData(cx, cy, 1, 1).data;
-            
             const r = data[0], g = data[1], b = data[2];
-
             const fpPlayer = document.getElementById('full-player');
             if (fpPlayer) {
-                fpPlayer.style.background = `
-                    radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.25) 0%, transparent 50%),
-                    radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.25) 0%, transparent 50%),
-                    radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.15) 0%, transparent 60%),
-                    var(--bg-deep)
-                `;
+                fpPlayer.style.background = `radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.25) 0%, transparent 50%), radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.25) 0%, transparent 50%), radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.15) 0%, transparent 60%), var(--bg-deep)`;
                 fpPlayer.style.backgroundSize = "200% 200%";
                 fpPlayer.style.animation = "liquidFlow 15s ease-in-out infinite";
             }
-
             const fpArt = document.getElementById('fp-art');
-            if (fpArt) {
-                fpArt.style.boxShadow = `0 30px 60px rgba(0,0,0,0.6), 0 0 40px rgba(${r}, ${g}, ${b}, 0.3)`;
-            }
-
+            if (fpArt) { fpArt.style.boxShadow = `0 30px 60px rgba(0,0,0,0.6), 0 0 40px rgba(${r}, ${g}, ${b}, 0.3)`; }
             const mini = document.querySelector('.mini-player');
-            if (mini) {
-                mini.style.background = `
-                    radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.15) 0%, transparent 70%),
-                    var(--glass-bg)
-                `;
-                mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 20px rgba(${r}, ${g}, ${b}, 0.15)`;
-            }
+            if (mini) { mini.style.background = `radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.15) 0%, transparent 70%), var(--glass-bg)`; mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 20px rgba(${r}, ${g}, ${b}, 0.15)`; }
         } catch(e) {}
     };
     img.src = imageSrc;
@@ -365,30 +301,21 @@ window.applyLiquidShadow = (imageSrc) => {
 
 function updatePlayerUI(track) {
     const els = {
-        mT: document.getElementById('mini-title-el'),
-        mA: document.getElementById('mini-artist-el'),
-        mArt: document.getElementById('mini-art-el'),
-        fT: document.getElementById('fp-title'),
-        fA: document.getElementById('fp-artist'),
-        fArt: document.getElementById('fp-art'),
-        mL: document.getElementById('mini-like-btn'),
-        fL: document.getElementById('fp-like')
+        mT: document.getElementById('mini-title-el'), mA: document.getElementById('mini-artist-el'), mArt: document.getElementById('mini-art-el'),
+        fT: document.getElementById('fp-title'), fA: document.getElementById('fp-artist'), fArt: document.getElementById('fp-art'),
+        mL: document.getElementById('mini-like-btn'), fL: document.getElementById('fp-like')
     };
-
     if(els.mT) els.mT.textContent = track.title;
     if(els.mA) els.mA.textContent = track.author;
     if(els.mArt) { els.mArt.style.backgroundImage = `url(${track.thumb})`; els.mArt.style.backgroundSize = 'cover'; }
     if(els.fT) els.fT.textContent = track.title;
     if(els.fA) els.fA.innerHTML = `${window.escapeHTML(track.author)} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
     if(els.fArt) { els.fArt.src = track.thumb; els.fArt.style.display = 'block'; }
-    
     window.applyLiquidShadow(track.thumb);
-
     const isLiked = !!window.OCTAVE.liked[track.videoId];
     const likeHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
     if(els.mL) els.mL.innerHTML = likeHTML;
     if(els.fL) els.fL.innerHTML = likeHTML;
-    
     if(document.getElementById('playlist-detail-list')) {
         const activeNav = document.querySelector('.nav-item.active')?.getAttribute('data-tab');
         if (activeNav === 'home' || activeNav === 'library') window.renderHome(); 
@@ -414,7 +341,6 @@ function seekToPosition(e, containerElement) {
         const miniFill = document.getElementById('mini-progress');
         if(fpFill) fpFill.style.width = `${percentage * 100}%`;
         if(miniFill) miniFill.style.width = `${percentage * 100}%`;
-        
         syncMediaSessionPosition();
     }
 }
@@ -441,108 +367,54 @@ window.performSearch = async (query) => {
 
 window.setSleepTimer = (minutes) => {
     if(sleepTimerId) clearTimeout(sleepTimerId);
-    if(minutes === 0) { 
-        alert('Sleep timer cancelled.'); 
-        document.getElementById('timer-modal')?.classList.remove('active');
-        return; 
-    }
+    if(minutes === 0) { alert('Sleep timer cancelled.'); document.getElementById('timer-modal')?.classList.remove('active'); return; }
     alert(`Sleep timer set. Audio will pause in ${minutes} minutes.`);
     document.getElementById('timer-modal')?.classList.remove('active');
-    sleepTimerId = setTimeout(() => {
-        if(window.OCTAVE.isPlaying) window.togglePlay();
-    }, minutes * 60000);
+    sleepTimerId = setTimeout(() => { if(window.OCTAVE.isPlaying) window.togglePlay(); }, minutes * 60000);
 };
 
-window.activeSyncedLyrics = null;
-window.lastLyricIdx = -1;
-
-// ACCURACY OVERHAUL: Specific cleaning and duration check
+// CLEAN STATIC LYRICS (NO AUTO-SYNC)
 window.fetchLyrics = async (artist, title) => {
-    const cleanTitle = title
-        .replace(/[\(\[【].*?[\)\]】]/g, '') 
-        .replace(/(feat\.|ft\.|remix|official|video|music video|lyric|audio|live).*/gi, '') 
-        .replace(/["']/g, '') 
-        .trim();
-        
-    const cleanArtist = artist
-        .replace(/ - Topic/gi, '')
-        .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| with /i)[0] 
-        .trim();
-
+    const cleanTitle = title.replace(/[\(\[【].*?[\)\]】]/g, '').replace(/(feat\.|ft\.|remix|official|video|music video|lyric|audio|live).*/gi, '').replace(/["']/g, '').trim();
+    const cleanArtist = artist.replace(/ - Topic/gi, '').replace(/VEVO/gi, '').split(/,|&| ft\.| feat\.| with /i)[0].trim();
     try {
         const query = `${cleanArtist} ${cleanTitle}`;
         const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
         if (r1.ok) {
             const data = await r1.json();
             if (data && data.length > 0) {
-                // Find best match based on Track Name similarity to prevent wrong song
-                const bestMatch = data.find(item => 
-                    item.trackName.toLowerCase().includes(cleanTitle.toLowerCase()) ||
-                    cleanTitle.toLowerCase().includes(item.trackName.toLowerCase())
-                ) || data[0];
-
-                if (bestMatch.syncedLyrics) {
-                    const lines = bestMatch.syncedLyrics.split('\n');
-                    window.activeSyncedLyrics = [];
-                    let html = `<div style="padding: 20px 0 160px 0; font-family: '${window.OCTAVE.selectedFont}', sans-serif;">`;
-                    lines.forEach(line => {
-                        const match = line.match(/\[(\d+):(\d+\.\d+)\](.*)/);
-                        if(match) {
-                            const time = parseInt(match[1]) * 60 + parseFloat(match[2]);
-                            const text = match[3].trim();
-                            if(text) {
-                                window.activeSyncedLyrics.push({ time, text });
-                                html += `<div class="lyric-line" onclick="YTP.seekTo(${time}, true)">${window.escapeHTML(text)}</div>`;
-                            }
-                        }
+                const bestMatch = data.find(item => item.trackName.toLowerCase().includes(cleanTitle.toLowerCase())) || data[0];
+                const rawLyrics = bestMatch.syncedLyrics || bestMatch.plainLyrics || "";
+                if (rawLyrics) {
+                    const cleanLines = rawLyrics.replace(/\[\d+:\d+\.\d+\]/g, '').split('\n').filter(l => l.trim() !== "");
+                    let html = `<div style="padding: 20px 0 160px 0; font-family: '${window.OCTAVE.selectedFont}', sans-serif; display: flex; flex-direction: column; gap: 16px;">`;
+                    cleanLines.forEach(line => {
+                        html += `<div class="lyric-line">${window.escapeHTML(line)}</div>`;
                     });
                     html += '</div>';
-                    window.lastLyricIdx = -1;
-                    return { isSynced: true, html };
-                } else if (bestMatch.plainLyrics) {
-                    window.activeSyncedLyrics = null;
-                    return { isSynced: false, html: `<div style="padding: 20px 0; white-space: pre-wrap; font-family: '${window.OCTAVE.selectedFont}', sans-serif; font-size: 20px; font-weight: 700; line-height: 2; color: #ffffff; opacity: 1;">${window.escapeHTML(bestMatch.plainLyrics)}</div>` };
+                    return html;
                 }
             }
         }
-    } catch(e) { console.warn("LRCLIB fallback triggered"); }
-    
-    window.activeSyncedLyrics = null;
-    return { isSynced: false, html: "Lyrics not available in open-source databases." };
+    } catch(e) {}
+    return `<div style="text-align:center; padding: 40px; color: var(--text-secondary);">Lyrics not found for this track.</div>`;
 };
 
 window.fetchFullArtistProfile = async (artist) => {
     const cleanArtist = artist.replace(/ - Topic/g, '').replace(/VEVO/i, '').trim();
-    let profile = { name: cleanArtist, bio: "Artist biography not available in databases.", banner: "", tracks: [] };
-
+    let profile = { name: cleanArtist, bio: "Artist biography not available.", banner: "", tracks: [] };
     try {
         const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
         if (r1.ok) {
             const data = await r1.json();
             if (data.artists && data.artists[0]) {
                 const art = data.artists[0];
-                if (art.strBiographyEN) {
-                    let bio = art.strBiographyEN;
-                    if(bio.length > 1000) bio = bio.substring(0, 1000) + "...";
-                    profile.bio = bio;
-                }
+                if (art.strBiographyEN) profile.bio = art.strBiographyEN.substring(0, 1000) + "...";
                 if (art.strArtistFanart) profile.banner = art.strArtistFanart;
                 else if (art.strArtistThumb) profile.banner = art.strArtistThumb;
             }
         }
     } catch(e) {}
-    
-    if (profile.bio === "Artist biography not available in databases.") {
-        try {
-            const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
-            if (r2.ok) {
-                const data = await r2.json();
-                if (data.extract) profile.bio = data.extract;
-            }
-        } catch(e) {}
-    }
-
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         const controller = new AbortController();
@@ -553,10 +425,7 @@ window.fetchFullArtistProfile = async (artist) => {
             if (r3.ok) {
                 const d = await r3.json();
                 if (d && d.length > 0) {
-                    profile.tracks = d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).slice(0, 10).map(item => ({
-                        videoId: item.videoId, title: item.title, author: item.author,
-                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
-                    }));
+                    profile.tracks = d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).slice(0, 10).map(item => ({ videoId: item.videoId, title: item.title, author: item.author, thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : '' }));
                     window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
                     break;
                 }
@@ -571,15 +440,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
     document.getElementById('fp-next')?.addEventListener('click', () => { if(window.playNextLogic) window.playNextLogic(); });
     document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
-    
-    document.getElementById('mini-like-btn')?.addEventListener('click', (e) => { 
-        e.stopPropagation(); 
-        if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); 
-    });
-    document.getElementById('fp-like')?.addEventListener('click', () => { 
-        if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); 
-    });
-
+    document.getElementById('mini-like-btn')?.addEventListener('click', (e) => { e.stopPropagation(); if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); });
+    document.getElementById('fp-like')?.addEventListener('click', () => { if(window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]); });
     document.getElementById('fp-progress-container')?.addEventListener('click', (e) => seekToPosition(e, document.getElementById('fp-progress-container')));
     document.querySelector('.mini-player')?.addEventListener('click', (e) => {
         const rect = document.querySelector('.mini-player').getBoundingClientRect();
