@@ -1,3 +1,10 @@
+window.escapeHTML = (str) => {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+};
+
 window.OCTAVE = {
     queue:[], currentIndex: -1, isPlaying: false,
     liked: {}, playlists: {}, recentPlayed: [], recentSearches:[],
@@ -58,11 +65,23 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-const INVIDIOUS =[
+let INVIDIOUS =[
     'https://inv.nadeko.net', 'https://invidious.privacyredirect.com',
     'https://invidious.nerdvpn.de', 'https://iv.melmac.space', 
     'https://invidious.io.lol', 'https://invidious.lunar.icu'
 ];
+
+// Dynamically fetch healthy instances on load
+fetch('https://api.invidious.io/instances.json?sort_by=health')
+    .then(res => res.json())
+    .then(data => {
+        const healthy = data
+            .filter(inst => inst[1].type === 'https' && inst[1].api === true)
+            .map(inst => inst[1].uri);
+        if (healthy.length > 0) INVIDIOUS = [...new Set([...healthy, ...INVIDIOUS])];
+    })
+    .catch(() => console.warn('Using fallback Invidious instances'));
+
 let invIdx = Math.floor(Math.random() * INVIDIOUS.length);
 let YTP = null, ytReady = false, progressTimer = null, sleepTimerId = null;
 
@@ -100,7 +119,7 @@ function onYTS(e) {
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
         startProgressTracking();
-        syncMediaSessionPosition(); // Force sync to OS
+        syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
         window.OCTAVE.isPlaying = false;
         updatePlayIcons('fa-solid fa-play');
@@ -151,11 +170,9 @@ function formatTime(seconds) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-// --- ADVANCED MEDIA SESSION INTEGRATION ---
 function updateMediaSession(track) {
     if (!('mediaSession' in navigator)) return;
     
-    // Provide multiple sizes so Android can pick the highest quality one
     navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title, 
         artist: track.author,
@@ -169,13 +186,11 @@ function updateMediaSession(track) {
         ]
     });
 
-    // Hard-bind events to ensure Android doesn't strip them
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('nexttrack', () => { window.playNext(); });
     navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
     
-    // Unlocks the interactive drag-scrubber on Android 13+
     try {
         navigator.mediaSession.setActionHandler('seekto', (details) => {
             if (YTP && typeof YTP.seekTo === 'function') {
@@ -418,6 +433,42 @@ window.removeFromLiked = (videoId) => {
     if(window.renderLikedSongs) window.renderLikedSongs();
 };
 
+window.applyLiquidShadow = (imageSrc) => {
+    const img = new Image();
+    img.crossOrigin = "Anonymous";
+    img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        try {
+            const cx = Math.floor(img.width / 2);
+            const cy = Math.floor(img.height / 2);
+            const data = ctx.getImageData(cx, cy, 1, 1).data;
+            
+            const r = data[0], g = data[1], b = data[2];
+            const color = `rgba(${r}, ${g}, ${b}, 0.5)`;
+            const glowColor = `rgba(${r}, ${g}, ${b}, 0.25)`;
+
+            const fpArt = document.getElementById('fp-art');
+            if (fpArt) {
+                fpArt.style.boxShadow = `0 20px 50px ${color}, 0 0 100px ${glowColor}`;
+                fpArt.style.transition = 'box-shadow 0.8s ease';
+            }
+
+            const mini = document.querySelector('.mini-player');
+            if (mini) {
+                mini.style.boxShadow = `0 10px 30px ${color}`;
+                mini.style.transition = 'box-shadow 0.8s ease';
+            }
+        } catch(e) {
+            // If API blocks CORS, gracefully fallback to default CSS without hanging
+        }
+    };
+    img.src = imageSrc;
+};
+
 function updatePlayerUI(track) {
     const els = {
         mT: document.getElementById('mini-title-el'),
@@ -434,11 +485,13 @@ function updatePlayerUI(track) {
     if(els.mA) els.mA.textContent = track.author;
     if(els.mArt) { els.mArt.style.backgroundImage = `url(${track.thumb})`; els.mArt.style.backgroundSize = 'cover'; }
     if(els.fT) els.fT.textContent = track.title;
-    if(els.fA) els.fA.innerHTML = `${track.author} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
+    if(els.fA) els.fA.innerHTML = `${window.escapeHTML(track.author)} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
     if(els.fArt) { els.fArt.src = track.thumb; els.fArt.style.display = 'block'; }
     
     const ambientBg = document.getElementById('fp-ambient-bg');
     if(ambientBg) ambientBg.style.backgroundImage = `url(${track.thumb})`;
+
+    window.applyLiquidShadow(track.thumb);
 
     const isLiked = !!window.OCTAVE.liked[track.videoId];
     const likeHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
@@ -595,7 +648,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fpPanel.classList.add('active');
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         const lyrics = await window.fetchLyrics(track.author, track.title);
-        fpContent.innerHTML = `<div id="lyrics-content">${lyrics}</div>`;
+        fpContent.innerHTML = `<div id="lyrics-content">${window.escapeHTML(lyrics)}</div>`;
     });
 
     document.getElementById('fp-artist')?.addEventListener('click', async () => {
@@ -605,7 +658,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fpPanel.classList.add('active');
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         const bio = await window.fetchArtistBio(track.author);
-        fpContent.innerHTML = `<div style="color: var(--text-primary); font-size: 15px; line-height: 1.8;">${bio}</div>`;
+        fpContent.innerHTML = `<div style="color: var(--text-primary); font-size: 15px; line-height: 1.8;">${window.escapeHTML(bio)}</div>`;
     });
 
     document.getElementById('fp-queue-btn')?.addEventListener('click', () => {
@@ -620,7 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const isPlaying = i === curr;
             const el = document.createElement('div');
             el.style.cssText = `display: flex; align-items: center; gap: 14px; padding: 12px; background: ${isPlaying ? 'rgba(30,215,96,0.1)' : 'var(--bg-surface)'}; border-radius: 8px; margin-bottom: 12px; border: ${isPlaying ? '1px solid var(--accent)' : '1px solid transparent'};`;
-            el.innerHTML = `<img src="${track.thumb}" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover;"><div style="flex: 1; min-width: 0;"><div style="font-size: 14px; font-weight: 600; color: ${isPlaying ? 'var(--accent)' : 'var(--text-primary)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${track.title}</div><div style="font-size: 12px; color: var(--text-secondary);">${track.author}</div></div>${isPlaying ? '<i class="fa-solid fa-volume-high" style="color: var(--accent);"></i>' : ''}`;
+            el.innerHTML = `<img src="${track.thumb}" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover;"><div style="flex: 1; min-width: 0;"><div style="font-size: 14px; font-weight: 600; color: ${isPlaying ? 'var(--accent)' : 'var(--text-primary)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${window.escapeHTML(track.title)}</div><div style="font-size: 12px; color: var(--text-secondary);">${window.escapeHTML(track.author)}</div></div>${isPlaying ? '<i class="fa-solid fa-volume-high" style="color: var(--accent);"></i>' : ''}`;
             fpContent.appendChild(el);
         }
     });
