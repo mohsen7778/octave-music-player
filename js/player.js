@@ -2,7 +2,7 @@ window.OCTAVE = {
     queue:[], currentIndex: -1, isPlaying: false,
     liked: {}, playlists: {}, recentPlayed: [], recentSearches:[],
     playStats: {}, activeTrackForOptions: null,
-    dailyRecs: { timestamp: 0, tracks:[] } // NEW: Recommendation cache
+    dailyRecs: { timestamp: 0, tracks:[] }
 };
 
 function saveCache() {
@@ -240,7 +240,7 @@ async function playNextLogic() {
 }
 window.playNext = playNextLogic;
 
-// --- 5-DAY RECOMMENDATION ENGINE ---
+// --- 5-DAY RECOMMENDATION ENGINE WITH TRENDING FALLBACK ---
 window.fetchDailyRecommendations = async () => {
     if (!window.OCTAVE) return;
     const now = Date.now();
@@ -251,19 +251,35 @@ window.fetchDailyRecommendations = async () => {
     }
     
     const baseTracks =[...Object.values(window.OCTAVE.liked), ...window.OCTAVE.recentPlayed].slice(0, 20);
-    if (baseTracks.length === 0) return;
     
-    const seed = baseTracks[Math.floor(Math.random() * baseTracks.length)];
     for (let i = 0; i < INVIDIOUS.length; i++) {
         const base = INVIDIOUS[(invIdx + i) % INVIDIOUS.length];
         try {
-            const r = await fetch(`${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`, { signal: AbortSignal.timeout(5000) });
+            let url = '';
+            // If the user has a history, find similar music to their taste.
+            if (baseTracks.length > 0) {
+                const seed = baseTracks[Math.floor(Math.random() * baseTracks.length)];
+                url = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
+            } else {
+                // If they are a brand new user, fetch Global Trending Music as a fallback!
+                url = `${base}/api/v1/popular?videoCategory=10`; // Category 10 is Music
+            }
+
+            const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
             if (r.ok) {
                 const d = await r.json();
-                if (d.recommendedVideos && d.recommendedVideos.length > 0) {
+                let newTracks =[];
+
+                if (baseTracks.length > 0 && d.recommendedVideos) {
+                    newTracks = d.recommendedVideos.slice(0, 10);
+                } else if (baseTracks.length === 0 && Array.isArray(d)) {
+                    newTracks = d.slice(0, 10);
+                }
+
+                if (newTracks.length > 0) {
                     window.OCTAVE.dailyRecs = {
                         timestamp: now,
-                        tracks: d.recommendedVideos.slice(0, 10).map(rec => ({
+                        tracks: newTracks.map(rec => ({
                             videoId: rec.videoId, title: rec.title, author: rec.author,
                             thumb: (rec.videoThumbnails && rec.videoThumbnails.length > 0) ? rec.videoThumbnails[0].url : ''
                         }))
@@ -351,7 +367,6 @@ window.smartShufflePlaylist = (plName) => {
     }
 };
 
-// FIXED: Remove Playlist Functionality added
 window.deletePlaylist = (plName) => {
     if (confirm(`Are you sure you want to permanently delete "${plName}"?`)) {
         delete window.OCTAVE.playlists[plName];
