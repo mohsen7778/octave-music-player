@@ -28,7 +28,8 @@ window.OCTAVE = {
     sessionHistory: [], 
     trackStartTime: 0,
     isNextTrackManual: true, 
-    activeTrackViewed: false
+    activeTrackViewed: false,
+    isDraggingProgress: false // NEW: Tracks when the user is scrubbing the progress bar
 };
 
 // ─── HYBRID ENGINE ROUTER ──────────────────────────────────────────────────
@@ -86,7 +87,6 @@ function loadCache() {
         });
 
         window.OCTAVE.queue = parsed.queue || [];
-        // FIX: 0 evaluates to false, causing the first track in queue to be lost on refresh. Checking undefined directly.
         window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
         window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks: [] };
         window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks: [] };
@@ -330,7 +330,8 @@ window.togglePlay = () => {
 function startProgressTracking() {
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
-        if (!window.OCTAVE.isPlaying) return;
+        // Stop updating the UI if the user is dragging the scrubber
+        if (!window.OCTAVE.isPlaying || window.OCTAVE.isDraggingProgress) return;
         
         let current = 0;
         let total = 0;
@@ -644,27 +645,48 @@ window.toggleLike = (track) => {
     if (window.renderHome) window.renderHome();
 };
 
-function seekToPosition(e, containerElement) {
+// MODIFIED: Seek function now handles continuous dragging coordinates and boolean locks
+function seekToPosition(e, containerElement, isFinalSeek = true) {
     if (window.OCTAVE.currentIndex === -1 || !containerElement) return;
     const rect = containerElement.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    
+    let clientX = 0;
+    if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+    } else if (e.changedTouches && e.changedTouches.length > 0) {
+        clientX = e.changedTouches[0].clientX;
+    } else {
+        clientX = e.clientX;
+    }
+    
+    const percentage = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     
     let totalTime = 0;
     if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.getDuration === 'function') {
         totalTime = YTP.getDuration();
-        if (totalTime > 0) YTP.seekTo(totalTime * percentage, true);
     } else if (window.AUDIO_ENGINE === 'native') {
         totalTime = AUDIO.duration;
-        if (totalTime > 0 && !isNaN(totalTime)) AUDIO.currentTime = totalTime * percentage;
     }
 
     if (totalTime > 0 && !isNaN(totalTime)) {
+        // Instantly update the visual UI
         const fpFill = document.getElementById('fp-progress-fill');
         const miniFill = document.getElementById('mini-progress');
-        if (fpFill) fpFill.style.width = `${percentage * 100}%`;
-        if (miniFill) miniFill.style.width = `${percentage * 100}%`;
-        syncMediaSessionPosition();
+        const currTime = document.getElementById('fp-time-current');
+        
+        if (containerElement.id === 'fp-progress-container' && fpFill) fpFill.style.width = `${percentage * 100}%`;
+        if (containerElement.classList.contains('mini-player') && miniFill) miniFill.style.width = `${percentage * 100}%`;
+        if (currTime) currTime.textContent = formatTime(totalTime * percentage);
+
+        // Only lock the position into the audio stream on the final release
+        if (isFinalSeek) {
+            if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
+                YTP.seekTo(totalTime * percentage, true);
+            } else if (window.AUDIO_ENGINE === 'native') {
+                AUDIO.currentTime = totalTime * percentage;
+            }
+            syncMediaSessionPosition();
+        }
     }
 }
 
@@ -846,8 +868,6 @@ window.fetchFullArtistProfile = async (artist) => {
 
 document.addEventListener('DOMContentLoaded', () => {
     
-    // --- NEW FALLBACK LOGIC ---
-    // If queue somehow gets wiped, load the absolute most recently played song to keep the player active
     if (window.OCTAVE.currentIndex === -1 && window.OCTAVE.recentPlayed.length > 0) {
         window.OCTAVE.queue = [window.OCTAVE.recentPlayed[0]];
         window.OCTAVE.currentIndex = 0;
@@ -857,7 +877,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         updatePlayerUI(track);
-        updateMediaSession(track); // Let OS Background controls know what song is locked in on refresh
+        updateMediaSession(track); 
         
         if (window.AUDIO_ENGINE === 'native') {
             streamQueue = buildStreamQueue(track.videoId);
@@ -873,7 +893,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const rect = document.querySelector('.mini-player').getBoundingClientRect();
         if (e.clientY - rect.top <= 10) {
             e.stopPropagation();
-            seekToPosition(e, document.querySelector('.mini-player'));
+            seekToPosition(e, document.querySelector('.mini-player'), true);
         } else {
             if(window.OCTAVE.currentIndex >= 0 && !window.OCTAVE.activeTrackViewed) {
                 const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
@@ -917,5 +937,30 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
     });
     
-    document.getElementById('fp-progress-container')?.addEventListener('click', (e) => seekToPosition(e, document.getElementById('fp-progress-container')));
+    // MODIFIED: Unified Scrubber logic for the Full Player
+    const fpProgContainer = document.getElementById('fp-progress-container');
+    if (fpProgContainer) {
+        const handleScrubStart = (e) => {
+            window.OCTAVE.isDraggingProgress = true;
+            seekToPosition(e, fpProgContainer, false);
+        };
+        const handleScrubMove = (e) => {
+            if (!window.OCTAVE.isDraggingProgress) return;
+            if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); // Prevents page scrolling while scrubbing
+            seekToPosition(e, fpProgContainer, false);
+        };
+        const handleScrubEnd = (e) => {
+            if (!window.OCTAVE.isDraggingProgress) return;
+            window.OCTAVE.isDraggingProgress = false;
+            seekToPosition(e, fpProgContainer, true);
+        };
+
+        fpProgContainer.addEventListener('mousedown', handleScrubStart);
+        document.addEventListener('mousemove', handleScrubMove, { passive: false });
+        document.addEventListener('mouseup', handleScrubEnd);
+        
+        fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
+        document.addEventListener('touchmove', handleScrubMove, { passive: false });
+        document.addEventListener('touchend', handleScrubEnd);
+    }
 });
