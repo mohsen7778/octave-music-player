@@ -171,25 +171,35 @@ window.fetchTrendingMusic = async () => {
     }
 
     try {
-        // Fetch Top 20 from iTunes Open API
-        const r = await fetch('https://itunes.apple.com/us/rss/topsongs/limit=20/json');
+        // Fetch Top 50 from iTunes Open API
+        const r = await fetch('https://itunes.apple.com/us/rss/topsongs/limit=50/json');
         if (r.ok) {
             const d = await r.json();
             if (d.feed && d.feed.entry) {
-                const newTracks = d.feed.entry.map(entry => {
-                    // Grab the highest resolution thumb available
-                    let thumbUrl = '';
-                    if (entry['im:image'] && entry['im:image'].length > 0) {
-                        thumbUrl = entry['im:image'][entry['im:image'].length - 1].label;
-                    }
+                const uniqueTracks = new Map();
+
+                d.feed.entry.forEach(entry => {
+                    const title = entry['im:name'].label;
+                    const author = entry['im:artist'].label;
+                    const key = `${title}-${author}`.toLowerCase(); // Deduplication key
                     
-                    return {
-                        videoId: null, // We will fetch this dynamically on click
-                        title: entry['im:name'].label,
-                        author: entry['im:artist'].label,
-                        thumb: thumbUrl
-                    };
+                    if (!uniqueTracks.has(key)) {
+                        // Grab the highest resolution thumb available
+                        let thumbUrl = '';
+                        if (entry['im:image'] && entry['im:image'].length > 0) {
+                            thumbUrl = entry['im:image'][entry['im:image'].length - 1].label;
+                        }
+                        
+                        uniqueTracks.set(key, {
+                            videoId: null, // Fetched dynamically on click
+                            title: title,
+                            author: author,
+                            thumb: thumbUrl
+                        });
+                    }
                 });
+
+                const newTracks = Array.from(uniqueTracks.values());
 
                 if (newTracks.length > 0) {
                     window.OCTAVE.trendingData = {
