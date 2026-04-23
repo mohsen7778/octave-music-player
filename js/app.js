@@ -11,12 +11,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const dynamicView = document.getElementById('dynamic-view');
     const views = {
         home: dynamicView.innerHTML,
-        // SEARCH VIEW: YouTube Import button added near Search Title
+        // SEARCH VIEW: YouTube Import button updated with official branding
         search: `
             <header class="search-header" style="padding: 40px 20px 20px 20px; background: var(--bg-deep);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                     <h1 class="search-title" style="font-size: 24px; font-weight: 700; margin: 0;">Search</h1>
-                    <button class="icon-btn" id="open-yt-import" style="color: #ff0000; font-size: 22px;"><i class="fa-brands fa-youtube"></i></button>
+                    <button class="icon-btn" id="open-yt-import" style="display: flex; align-items: center; gap: 6px; font-family: 'Inter', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: -0.5px; color: var(--text-primary);">
+                        Add <i class="fa-brands fa-youtube" style="color: #ff0000; font-size: 24px; margin-left: 2px;"></i> YouTube Playlist
+                    </button>
                 </div>
                 <div class="search-input-wrap" style="position: relative;">
                     <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-secondary);"></i>
@@ -31,10 +33,13 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div class="bottom-spacer"></div>
         `,
+        // LIBRARY VIEW: YouTube Import button updated with official branding
         library: `
             <header class="search-header" style="padding: 40px 20px 20px 20px; display: flex; justify-content: space-between; align-items: center;">
                 <h1 class="search-title" style="font-size: 24px; font-weight: 700;">Library</h1>
-                <button class="icon-btn" id="open-yt-import" style="color: #ff0000; font-size: 24px;"><i class="fa-brands fa-youtube"></i></button>
+                <button class="icon-btn" id="open-yt-import" style="display: flex; align-items: center; gap: 6px; font-family: 'Inter', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: -0.5px; color: var(--text-primary);">
+                    Add <i class="fa-brands fa-youtube" style="color: #ff0000; font-size: 24px; margin-left: 2px;"></i> YouTube Playlist
+                </button>
             </header>
             <div id="lib-playlists" class="vertical-list" style="padding: 20px;"></div>
             <div class="bottom-spacer"></div>
@@ -74,6 +79,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('close-fp').addEventListener('click', () => document.getElementById('full-player').classList.remove('active'));
     document.getElementById('close-track-options').addEventListener('click', () => document.getElementById('track-options-modal').classList.remove('active'));
     document.getElementById('close-select-playlist').addEventListener('click', () => document.getElementById('select-playlist-modal').classList.remove('active'));
+    
+    // Fix for the cancel button
+    document.getElementById('close-yt-import').addEventListener('click', () => document.getElementById('yt-import-modal').classList.remove('active'));
+
+    // Fix for auto-canceling when clicking outside the modal
+    document.querySelectorAll('.modal-overlay').forEach(modal => {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.remove('active');
+            }
+        });
+    });
 });
 
 document.body.addEventListener('click', async (e) => {
