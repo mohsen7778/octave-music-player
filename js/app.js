@@ -1,3 +1,22 @@
+// NEW: Global variable to intercept the PWA install prompt
+let deferredInstallPrompt;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    // Prevent the default mini-infobar from appearing on mobile
+    e.preventDefault();
+    // Stash the event so it can be triggered later.
+    deferredInstallPrompt = e;
+    
+    // Only show the custom modal if they haven't dismissed it before
+    if (!localStorage.getItem('installPromptDismissed')) {
+        // Wait 3 seconds so we don't bombard them exactly when the app opens
+        setTimeout(() => {
+            const installModal = document.getElementById('install-modal');
+            if (installModal) installModal.classList.add('active');
+        }, 3000);
+    }
+});
+
 document.addEventListener('DOMContentLoaded', () => {
     
     // --- SHARED TRACK BOOT SEQUENCE ---
@@ -25,6 +44,24 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }, 1000);
     }
+
+    // --- PWA INSTALL BUTTON BINDINGS ---
+    document.getElementById('close-install')?.addEventListener('click', () => {
+        document.getElementById('install-modal').classList.remove('active');
+        localStorage.setItem('installPromptDismissed', 'true'); // Remembers not to bother them again
+    });
+
+    document.getElementById('confirm-install')?.addEventListener('click', async () => {
+        document.getElementById('install-modal').classList.remove('active');
+        localStorage.setItem('installPromptDismissed', 'true'); 
+        
+        if (deferredInstallPrompt) {
+            deferredInstallPrompt.prompt();
+            const { outcome } = await deferredInstallPrompt.userChoice;
+            console.log(`User response to the install prompt: ${outcome}`);
+            deferredInstallPrompt = null;
+        }
+    });
 
     setTimeout(() => {
         const splash = document.getElementById('splash-screen');
