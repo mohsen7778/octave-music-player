@@ -771,3 +771,12 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     btn.innerHTML = 'Import';
     btn.disabled = false;
 });
+// Puter AI Mobile Test
+setTimeout(async () => {
+    try {
+        const response = await puter.ai.chat("Give me exactly 3 heavy metal song names. Format as 'Song Name - Artist'. No other text.");
+        alert("AI is ALIVE! Response:\n" + response);
+    } catch (error) {
+        alert("AI Connection Failed: " + error);
+    }
+}, 4000); // Waits 4 seconds for your app to fully load first
