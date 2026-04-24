@@ -771,3 +771,18 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     btn.innerHTML = 'Import';
     btn.disabled = false;
 });
+// Pure Free AI Test (Zero Auth, Zero Keys)
+setTimeout(async () => {
+    try {
+        // We encode the prompt so it can be sent safely in a URL
+        const prompt = encodeURIComponent("Give me exactly 3 heavy workout songs. Format as 'Song Name - Artist'. Do not write any other text.");
+        
+        // Call the free, keyless endpoint
+        const response = await fetch(`https://text.pollinations.ai/${prompt}`);
+        const text = await response.text();
+        
+        alert("Free AI is ALIVE! Response:\n" + text);
+    } catch (error) {
+        alert("Free AI Connection Failed: " + error);
+    }
+}, 4000); // Waits 4 seconds for your app to fully load first
