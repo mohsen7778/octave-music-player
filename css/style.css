@@ -977,3 +977,20 @@ body {
 .fp-controls {
     margin-top: 0 !important; /* Removes any default gap above the play buttons */
 }
+/* --- NATIVE APP OVERSCROLL / RUBBER-BANDING FIX --- */
+
+/* 1. Stop the whole webpage from bouncing at the top and bottom */
+html, body {
+    overscroll-behavior-y: none !important; /* Disables the pull-to-refresh and bottom bounce */
+    background-color: #0a0b0e !important; /* Forces the absolute bottom layer to match your dark theme perfectly */
+}
+
+/* 2. Contain scrolling strictly to your app's scrollable areas */
+.mobile-app, 
+.main-content, 
+#dynamic-view, 
+.scroll-y, 
+#full-player {
+    overscroll-behavior-y: contain !important; 
+    -webkit-overflow-scrolling: touch !important; /* Ensures smooth, native-feeling scrolling on iOS */
+}
