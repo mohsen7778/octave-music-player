@@ -923,26 +923,27 @@ body {
 }
 /* --- SPOTIFY-GRADE UI FIX: DYNAMIC VIEWPORT & PERFECT 1:1 ART --- */
 
-/* 1. Force the player to respect the mobile browser's bottom UI bar */
+/* 1. Resize height dynamically WITHOUT breaking the close button / slide animation */
 #full-player {
-    position: fixed !important;
-    top: 0 !important;
-    bottom: 0 !important;
-    height: 100dvh !important; /* 'dvh' dynamically resizes when the browser address/nav bar appears! */
+    height: 100dvh !important; /* 'dvh' resizes dynamically for browser UI bars */
+    padding-bottom: calc(20px + env(safe-area-inset-bottom)) !important; 
+    box-sizing: border-box !important;
+    /* (Removed the top/bottom/fixed overrides here so it can hide normally!) */
+}
+
+/* Only apply the flex layout when the player is actually ACTIVE */
+#full-player.active {
     display: flex !important;
     flex-direction: column !important;
-    padding-bottom: calc(20px + env(safe-area-inset-bottom)) !important; /* Safe area for swipe gestures */
-    box-sizing: border-box !important;
-    overflow-y: auto !important; /* Allows scrolling only if on a tiny landscape screen */
 }
 
 /* 2. Make the album art responsive to HEIGHT so it NEVER pushes controls off screen */
 .fp-art-container {
     position: relative !important;
     width: calc(100vw - 48px) !important;
-    max-width: 45vh !important; /* The magic trick: max size is tied to screen height */
+    max-width: 45vh !important; /* Forces it to adapt to screen height */
     aspect-ratio: 1 / 1 !important; /* Keeps it perfectly square */
-    margin: auto !important; /* Pushes the header UP and controls DOWN, centering the art perfectly */
+    margin: auto !important; /* Centers it perfectly in the available space */
     flex-shrink: 0 !important;
 }
 
@@ -956,7 +957,7 @@ body {
     object-position: center !important;
     border-radius: 12px !important;
     display: block !important;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.4) !important; /* Premium floating shadow */
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4) !important; 
 }
 
 /* 3. Protect the bottom controls from being squished */
@@ -965,5 +966,5 @@ body {
 .fp-actions-grid, 
 .fp-progress-section, 
 .fp-controls {
-    flex-shrink: 0 !important; /* Strictly forbids the browser from crushing the buttons */
+    flex-shrink: 0 !important; 
 }
