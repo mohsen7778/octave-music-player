@@ -925,10 +925,10 @@ body {
 
 /* 1. Resize height dynamically WITHOUT breaking the close button / slide animation */
 #full-player {
-    height: 100dvh !important; /* 'dvh' resizes dynamically for browser UI bars */
-    padding-bottom: calc(20px + env(safe-area-inset-bottom)) !important; 
+    height: 100dvh !important; 
+    /* INCREASED BOTTOM PADDING: Raises the floor of the app so Brave UI can never touch the buttons */
+    padding-bottom: calc(45px + env(safe-area-inset-bottom)) !important; 
     box-sizing: border-box !important;
-    /* (Removed the top/bottom/fixed overrides here so it can hide normally!) */
 }
 
 /* Only apply the flex layout when the player is actually ACTIVE */
@@ -941,9 +941,9 @@ body {
 .fp-art-container {
     position: relative !important;
     width: calc(100vw - 48px) !important;
-    max-width: 45vh !important; /* Forces it to adapt to screen height */
-    aspect-ratio: 1 / 1 !important; /* Keeps it perfectly square */
-    margin: auto !important; /* Centers it perfectly in the available space */
+    max-width: 45vh !important; 
+    aspect-ratio: 1 / 1 !important; 
+    margin: auto !important; 
     flex-shrink: 0 !important;
 }
 
@@ -953,7 +953,7 @@ body {
     left: 0 !important;
     width: 100% !important;
     height: 100% !important;
-    object-fit: cover !important; /* Crops cleanly without stretching */
+    object-fit: cover !important; 
     object-position: center !important;
     border-radius: 12px !important;
     display: block !important;
@@ -967,4 +967,13 @@ body {
 .fp-progress-section, 
 .fp-controls {
     flex-shrink: 0 !important; 
+}
+
+/* 4. TIGHTEN GAP: Brings play buttons closer to the progress line */
+.fp-progress-section {
+    margin-bottom: 12px !important; /* Adjust this to change distance to the buttons */
+}
+
+.fp-controls {
+    margin-top: 0 !important; /* Removes any default gap above the play buttons */
 }
