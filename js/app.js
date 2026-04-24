@@ -770,13 +770,3 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     btn.innerHTML = 'Import';
     btn.disabled = false;
 });
-
-// Delayed Mobile Puter AI Test
-setTimeout(async () => {
-    try {
-        const response = await puter.ai.chat("Give me exactly 3 heavy workout songs. Format as 'Song Name - Artist'.");
-        alert("AI Response:\n" + response);
-    } catch (error) {
-        alert("Puter AI failed to connect: " + error);
-    }
-}, 4000); // Waits 4 seconds for your app to fully load first
