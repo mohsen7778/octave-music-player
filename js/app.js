@@ -771,3 +771,20 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     btn.innerHTML = 'Import';
     btn.disabled = false;
 });
+
+
+// Test Puter AI Connection
+async function testPuterAI() {
+    console.log("Asking AI for a heavy duty mix...");
+    try {
+        // We ask Puter to act as a music expert
+        const response = await puter.ai.chat("Give me exactly 3 heavy workout songs. Format as 'Song Name - Artist'. Do not write any other text.");
+        console.log("AI Response received:");
+        console.log(response);
+    } catch (error) {
+        console.error("Puter AI failed to connect:", error);
+    }
+}
+
+// Run the test when the file loads
+testPuterAI();
