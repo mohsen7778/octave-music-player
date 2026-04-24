@@ -185,17 +185,18 @@ async function generateAiMix() {
         const response = await fetch(`https://text.pollinations.ai/${encodeURIComponent(systemPrompt)}`);
         const text = await response.text();
 
-        // Cleans numbering and formatting from AI output
+        // Cleans numbering and formatting from AI output, robustly handling any dash or hyphen variations
         const lines = text.split('\n')
             .map(l => l.replace(/^\d+[\.\)]\s*/, '').trim()) 
-            .filter(l => l.includes(' - '));
+            .filter(l => l.match(/\s+[-–—]\s+/));
 
         if (lines.length === 0) throw new Error("Format invalid.");
 
-        const playableTracks = [];
+        const playableTracks =[];
         // Only search for top 15 to ensure stability
         for (const line of lines.slice(0, 15)) {
-            const [title, artist] = line.split(' - ');
+            // Split using robust regex to handle standard hyphens, en-dashes, and em-dashes
+            const[title, artist] = line.split(/\s+[-–—]\s+/);
             const results = await window.performSearch(`${title} ${artist}`);
             if (results.length > 0) playableTracks.push(results[0]);
         }
@@ -302,7 +303,7 @@ document.getElementById('fp-lyrics-btn').addEventListener('click', async () => {
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     const html = await window.fetchLyrics(track.author, track.title);
 
-    const fonts = [
+    const fonts =[
         { name: 'Modern', css: 'Plus Jakarta Sans' },
         { name: 'Clean', css: 'Inter' },
         { name: 'Classic', css: 'Lora' },
@@ -453,7 +454,7 @@ if (document.getElementById('fp-options')) {
 // --- CORE RENDERERS ---
 window.renderPlaylistDetail = (plName) => {
     const dynamicView = document.getElementById('dynamic-view');
-    const tracks = window.OCTAVE.playlists[plName] || [];
+    const tracks = window.OCTAVE.playlists[plName] ||[];
     let html = `
         <div style="padding: 20px;">
             <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px; margin-top: 10px;">
@@ -658,7 +659,7 @@ function bindHomeModals() {
     document.getElementById('save-playlist')?.addEventListener('click', () => {
         const name = document.getElementById('playlist-name').value.trim();
         if (name !== '' && !window.OCTAVE.playlists[name]) {
-            window.OCTAVE.playlists[name] = [];
+            window.OCTAVE.playlists[name] =[];
             window.saveCache();
             document.getElementById('playlist-name').value = '';
             document.getElementById('playlist-modal').classList.remove('active');
