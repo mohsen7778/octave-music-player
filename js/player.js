@@ -1,6 +1,6 @@
 // ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Chrome Native Engine (Clean Pipeline) | Brave IFrame
+// Chrome Native Engine (Perfected Gesture Chain) | Brave IFrame
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -42,7 +42,7 @@ if (navigator.brave && navigator.brave.isBrave) {
         }
     });
 } else {
-    console.log("Octave: Chrome/Safari detected. Using Clean Native Engine.");
+    console.log("Octave: Chrome/Safari detected. Using Stable Single-Stream Native Engine.");
 }
 
 window.initTrackStats = (videoId) => {
@@ -165,6 +165,7 @@ let audioUnlocked = false;
 function unlockAudioForSafari() {
     if (audioUnlocked) return;
     audioUnlocked = true;
+    
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const buf = ctx.createBuffer(1, 1, 22050);
@@ -213,27 +214,6 @@ async function getDirectAudioUrl(videoId) {
     return null;
 }
 
-const tryNextStream = async (videoId) => {
-    updatePlayIcons('fa-solid fa-spinner fa-spin'); 
-    
-    // Fetch URL completely BEFORE assigning src
-    const url = await getDirectAudioUrl(videoId);
-    
-    if (url) {
-        AUDIO.src = url;
-        AUDIO.load();
-        AUDIO.play().catch(() => {
-            updatePlayIcons('fa-solid fa-play');
-            window.OCTAVE.isPlaying = false;
-        });
-    } else {
-        console.error("All proxies failed to load track.");
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.playNextLogic(); 
-    }
-};
-
 AUDIO.addEventListener('error', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
     
@@ -243,6 +223,10 @@ AUDIO.addEventListener('error', () => {
 
 AUDIO.addEventListener('playing', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
+    
+    // Ignore the silent unlocker buffer triggering 'playing' state
+    if (AUDIO.src.startsWith('data:audio')) return;
+
     window.OCTAVE.isPlaying = true;
     
     if ('mediaSession' in navigator) {
@@ -256,6 +240,9 @@ AUDIO.addEventListener('playing', () => {
 
 AUDIO.addEventListener('pause', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
+    
+    if (AUDIO.src.startsWith('data:audio')) return;
+
     window.OCTAVE.isPlaying = false;
     
     if ('mediaSession' in navigator) {
@@ -271,6 +258,9 @@ AUDIO.addEventListener('pause', () => {
 
 AUDIO.addEventListener('ended', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
+    
+    if (AUDIO.src.startsWith('data:audio')) return;
+
     handleTrackEnded();
 });
 
@@ -499,8 +489,43 @@ window.playTrackByIndex = (index) => {
     if (window.AUDIO_ENGINE === 'iframe') {
         if (ytReady && YTP) YTP.loadVideoById({ videoId: track.videoId });
     } else {
+        // EXACT FIX: Inlined fetch logic directly within the user gesture chain
         AUDIO.pause();
-        tryNextStream(track.videoId); 
+        const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNyAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
+        AUDIO.src = SILENT_MP3;
+        
+        updatePlayIcons('fa-solid fa-spinner fa-spin');
+        
+        AUDIO.play().then(async () => {
+            const url = await getDirectAudioUrl(track.videoId);
+
+            if (url) {
+                AUDIO.src = url;
+                AUDIO.load();
+                AUDIO.play().catch(() => {
+                    updatePlayIcons('fa-solid fa-play');
+                    window.OCTAVE.isPlaying = false;
+                });
+            } else {
+                updatePlayIcons('fa-solid fa-play');
+                window.playNextLogic();
+            }
+        }).catch(async () => {
+            // fallback
+            const url = await getDirectAudioUrl(track.videoId);
+
+            if (url) {
+                AUDIO.src = url;
+                AUDIO.load();
+                AUDIO.play().catch(()=>{
+                    updatePlayIcons('fa-solid fa-play');
+                    window.OCTAVE.isPlaying = false;
+                });
+            } else {
+                updatePlayIcons('fa-solid fa-play');
+                window.playNextLogic();
+            }
+        });
     }
 };
 
