@@ -1,7 +1,6 @@
- // ============================================================
+// ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Detects Brave Browser for instant IFrame playback.
-// Falls back to Native <audio> Proxy for Chrome/Safari background play.
+// Forced IFrame Engine for all browsers to fix Chrome playback
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -12,38 +11,37 @@ window.escapeHTML = (str) => {
 };
 
 window.OCTAVE = {
-    queue: [],
+    queue:[],
     currentIndex: -1,
     isPlaying: false,
     liked: {},
     playlists: {},
     recentPlayed: [],
-    recentSearches: [],
+    recentSearches:[],
     playStats: {}, 
     activeTrackForOptions: null,
-    dailyRecs: { timestamp: 0, tracks: [] },
-    trendingData: { timestamp: 0, tracks: [] },
+    dailyRecs: { timestamp: 0, tracks:[] },
+    trendingData: { timestamp: 0, tracks:[] },
     artistCache: {},
     selectedFont: localStorage.getItem('octave_font') || 'Plus Jakarta Sans',
-    sessionHistory: [], 
+    sessionHistory:[], 
     trackStartTime: 0,
     isNextTrackManual: true, 
     activeTrackViewed: false,
-    isDraggingProgress: false // NEW: Tracks when the user is scrubbing the progress bar
+    isDraggingProgress: false
 };
 
 // ─── HYBRID ENGINE ROUTER ──────────────────────────────────────────────────
-window.AUDIO_ENGINE = 'native'; // Default to proxy for Chrome/Safari
+window.AUDIO_ENGINE = 'iframe'; // Force IFrame engine for ALL browsers including Chrome
 
 if (navigator.brave && navigator.brave.isBrave) {
     navigator.brave.isBrave().then(isBrave => {
         if (isBrave) {
-            window.AUDIO_ENGINE = 'iframe';
             console.log("Octave: Brave detected. Using Instant IFrame Engine.");
         }
     });
 } else {
-    console.log("Octave: Chrome/Safari detected. Using Native Proxy Engine.");
+    console.log("Octave: Chrome/Safari detected. Forced to Instant IFrame Engine.");
 }
 
 window.initTrackStats = (videoId) => {
@@ -77,7 +75,7 @@ function loadCache() {
         window.OCTAVE.liked = parsed.liked || {};
         window.OCTAVE.playlists = parsed.playlists || {};
         window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
-        window.OCTAVE.recentSearches = parsed.recentSearches || [];
+        window.OCTAVE.recentSearches = parsed.recentSearches ||[];
         
         window.OCTAVE.playStats = parsed.playStats || {};
         Object.keys(window.OCTAVE.playStats).forEach(key => {
@@ -86,10 +84,10 @@ function loadCache() {
             }
         });
 
-        window.OCTAVE.queue = parsed.queue || [];
+        window.OCTAVE.queue = parsed.queue ||[];
         window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
-        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks: [] };
-        window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks: [] };
+        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks:[] };
+        window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks:[] };
         window.OCTAVE.artistCache = parsed.artistCache || {};
     }
 }
@@ -125,7 +123,7 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-window.INVIDIOUS = [
+window.INVIDIOUS =[
     'https://inv.nadeko.net',
     'https://invidious.privacyredirect.com',
     'https://invidious.nerdvpn.de',
@@ -146,18 +144,21 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
-// ─── NATIVE ENGINE SETUP (CHROME/SAFARI) ──────────────────────────────────────
+// ─── BLAZING FAST NATIVE ENGINE (CHROME/SAFARI) ──────────────────────────────────────
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
 
-let streamQueue = [];   
-let streamQueueIdx = 0;
-let streamTimeout = null;
+const PRELOAD_AUDIO = new Audio(); 
+PRELOAD_AUDIO.preload = 'auto';
+let preloadedVideoId = null;
 
 let audioUnlocked = false;
-function unlockAudioForSafari() {
+function unlockAudioEngine() {
     if (audioUnlocked) return;
     audioUnlocked = true;
+    
+    AUDIO.play().then(() => { AUDIO.pause(); }).catch(() => {});
+    
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const buf = ctx.createBuffer(1, 1, 22050);
@@ -168,55 +169,57 @@ function unlockAudioForSafari() {
         ctx.resume().catch(() => {});
     } catch (e) {}
 }
-document.addEventListener('click', unlockAudioForSafari, { once: true });
-document.addEventListener('touchstart', unlockAudioForSafari, { once: true });
+document.addEventListener('click', unlockAudioEngine, { once: true });
+document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
-function buildStreamQueue(videoId) {
-    const itags = [140, 251, 18];
-    const urls = [];
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        itags.forEach(itag => {
-            urls.push(`${base}/latest_version?id=${videoId}&itag=${itag}&local=true`);
-        });
-    }
-    return urls;
+function getStreamUrl(videoId) {
+    const base = window.INVIDIOUS[window.invIdx];
+    return `${base}/latest_version?id=${videoId}&itag=140`;
 }
 
-const tryNextStream = () => {
-    clearTimeout(streamTimeout);
-    if (streamQueueIdx >= streamQueue.length) {
-        console.warn('Octave: All stream sources failed.');
+function preloadNextTrackInQueue() {
+    if (window.AUDIO_ENGINE !== 'native' || window.OCTAVE.currentIndex < 0) return;
+    const nextIdx = window.OCTAVE.currentIndex + 1;
+    if (nextIdx < window.OCTAVE.queue.length) {
+        const nextId = window.OCTAVE.queue[nextIdx].videoId;
+        PRELOAD_AUDIO.src = getStreamUrl(nextId);
+        preloadedVideoId = nextId;
+        PRELOAD_AUDIO.load(); 
+    }
+}
+
+const tryNextStream = (videoId) => {
+    updatePlayIcons('fa-solid fa-spinner fa-spin'); 
+    
+    if (preloadedVideoId === videoId && PRELOAD_AUDIO.src) {
+        AUDIO.src = PRELOAD_AUDIO.src;
+    } else {
+        AUDIO.src = getStreamUrl(videoId);
+    }
+    
+    AUDIO.load();
+    AUDIO.play().catch(() => {
         updatePlayIcons('fa-solid fa-play');
         window.OCTAVE.isPlaying = false;
-        return;
-    }
-    AUDIO.src = streamQueue[streamQueueIdx];
-    AUDIO.load();
-    AUDIO.play().catch(() => {});
-    
-    streamTimeout = setTimeout(() => {
-        if (!window.OCTAVE.isPlaying) {
-            console.warn('Stream too slow, skipping to next server...');
-            streamQueueIdx++;
-            tryNextStream();
-        }
-    }, 4000);
+    });
 };
 
 AUDIO.addEventListener('playing', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
-    clearTimeout(streamTimeout); 
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     startProgressTracking();
     syncMediaSessionPosition();
+    preloadNextTrackInQueue();
 });
 
 AUDIO.addEventListener('pause', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
     window.OCTAVE.isPlaying = false;
-    updatePlayIcons('fa-solid fa-play');
+    const fpIcon = document.querySelector('#fp-play i');
+    if (fpIcon && !fpIcon.classList.contains('fa-spinner')) {
+        updatePlayIcons('fa-solid fa-play');
+    }
     clearInterval(progressTimer);
 });
 
@@ -227,25 +230,21 @@ AUDIO.addEventListener('ended', () => {
 
 AUDIO.addEventListener('error', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
-    clearTimeout(streamTimeout);
-    streamQueueIdx++;
-    if (streamQueueIdx < streamQueue.length) {
-        AUDIO.src = streamQueue[streamQueueIdx];
+    
+    window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
+    
+    if (window.OCTAVE.currentIndex >= 0) {
+        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        const currentPos = AUDIO.currentTime || 0;
+        AUDIO.src = getStreamUrl(track.videoId);
+        AUDIO.currentTime = currentPos;
         AUDIO.load();
         AUDIO.play().catch(() => {});
-        streamTimeout = setTimeout(() => {
-            if (!window.OCTAVE.isPlaying) {
-                streamQueueIdx++;
-                AUDIO.dispatchEvent(new Event('error'));
-            }
-        }, 4000);
-    } else {
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
     }
 });
 
-// ─── IFRAME ENGINE SETUP (BRAVE) ──────────────────────────────────────────────
+
+// ─── IFRAME ENGINE SETUP (BRAVE / NOW ALSO CHROME) ─────────────────────────────
 let YTP = null;
 let ytReady = false;
 
@@ -309,6 +308,18 @@ function handleTrackEnded() {
     if (window.playNextLogic) window.playNextLogic();
 }
 
+window.playNextLogic = () => {
+    if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
+        window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
+    } else if (window.generateDiscoverMix) {
+        window.generateDiscoverMix(); 
+    } else {
+        window.OCTAVE.isPlaying = false;
+        updatePlayIcons('fa-solid fa-play');
+        clearInterval(progressTimer);
+    }
+};
+
 function updatePlayIcons(iconClass) {
     const mini = document.querySelector('.play-btn-mini i');
     const fp = document.querySelector('#fp-play i');
@@ -330,7 +341,6 @@ window.togglePlay = () => {
 function startProgressTracking() {
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
-        // Stop updating the UI if the user is dragging the scrubber
         if (!window.OCTAVE.isPlaying || window.OCTAVE.isDraggingProgress) return;
         
         let current = 0;
@@ -371,7 +381,7 @@ function updateMediaSession(track) {
     navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title,
         artist: track.author,
-        artwork: [
+        artwork:[
             { src: track.thumb, sizes: '96x96', type: 'image/jpeg' },
             { src: track.thumb, sizes: '128x128', type: 'image/jpeg' },
             { src: track.thumb, sizes: '192x192', type: 'image/jpeg' },
@@ -383,7 +393,7 @@ function updateMediaSession(track) {
 
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
-    navigator.mediaSession.setActionHandler('nexttrack', () => { document.getElementById('fp-next')?.click(); });
+    navigator.mediaSession.setActionHandler('nexttrack', () => { window.playNextLogic(); });
     navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
 
     try {
@@ -447,7 +457,7 @@ window.playTrackByIndex = (index) => {
         window.OCTAVE.sessionHistory.push(track.videoId);
     }
     
-    window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
+    window.OCTAVE.recentPlayed =[track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
     window.saveCache();
 
     updatePlayerUI(track);
@@ -457,15 +467,13 @@ window.playTrackByIndex = (index) => {
         if (ytReady && YTP) YTP.loadVideoById({ videoId: track.videoId });
     } else {
         AUDIO.pause();
-        streamQueue = buildStreamQueue(track.videoId);
-        streamQueueIdx = 0;
-        tryNextStream();
+        tryNextStream(track.videoId); 
     }
 };
 
 window.playTrack = (track) => {
     window.OCTAVE.isNextTrackManual = true; 
-    window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
+    window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
     if (existIdx >= 0) {
         window.playTrackByIndex(existIdx);
@@ -645,7 +653,6 @@ window.toggleLike = (track) => {
     if (window.renderHome) window.renderHome();
 };
 
-// MODIFIED: Seek function now handles continuous dragging coordinates and boolean locks
 function seekToPosition(e, containerElement, isFinalSeek = true) {
     if (window.OCTAVE.currentIndex === -1 || !containerElement) return;
     const rect = containerElement.getBoundingClientRect();
@@ -669,7 +676,6 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     }
 
     if (totalTime > 0 && !isNaN(totalTime)) {
-        // Instantly update the visual UI
         const fpFill = document.getElementById('fp-progress-fill');
         const miniFill = document.getElementById('mini-progress');
         const currTime = document.getElementById('fp-time-current');
@@ -678,7 +684,6 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
         if (containerElement.classList.contains('mini-player') && miniFill) miniFill.style.width = `${percentage * 100}%`;
         if (currTime) currTime.textContent = formatTime(totalTime * percentage);
 
-        // Only lock the position into the audio stream on the final release
         if (isFinalSeek) {
             if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
                 YTP.seekTo(totalTime * percentage, true);
@@ -713,7 +718,7 @@ window.performSearch = async (query) => {
             continue;
         }
     }
-    return [];
+    return[];
 };
 
 window.setSleepTimer = (minutes) => {
@@ -792,7 +797,7 @@ window.fetchFullArtistProfile = async (artist) => {
         name: cleanArtist,
         bio: "Artist biography not available.",
         banner: "",
-        tracks: []
+        tracks:[]
     };
 
     try {
@@ -880,12 +885,10 @@ document.addEventListener('DOMContentLoaded', () => {
         updateMediaSession(track); 
         
         if (window.AUDIO_ENGINE === 'native') {
-            streamQueue = buildStreamQueue(track.videoId);
-            streamQueueIdx = 0;
-            if (streamQueue.length > 0) {
-                AUDIO.src = streamQueue[0];
+            getFastestStreamUrl(track.videoId).then(url => {
+                AUDIO.src = url;
                 AUDIO.load();
-            }
+            });
         }
     }
 
@@ -937,7 +940,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
     });
     
-    // MODIFIED: Unified Scrubber logic for the Full Player
     const fpProgContainer = document.getElementById('fp-progress-container');
     if (fpProgContainer) {
         const handleScrubStart = (e) => {
@@ -946,7 +948,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         const handleScrubMove = (e) => {
             if (!window.OCTAVE.isDraggingProgress) return;
-            if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); // Prevents page scrolling while scrubbing
+            if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); 
             seekToPosition(e, fpProgContainer, false);
         };
         const handleScrubEnd = (e) => {
