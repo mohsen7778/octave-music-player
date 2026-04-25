@@ -1,6 +1,6 @@
 // ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Forced IFrame Engine for all browsers to fix Chrome playback
+// Forced IFrame Engine with Dynamic Background Swapping & Preloading
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -28,11 +28,14 @@ window.OCTAVE = {
     trackStartTime: 0,
     isNextTrackManual: true, 
     activeTrackViewed: false,
-    isDraggingProgress: false
+    isDraggingProgress: false,
+    isTransitioning: false, // Prevents spam-clicking and lag
+    nextTrackPreloaded: false // Tracks if 50s preload has run
 };
 
 // ─── HYBRID ENGINE ROUTER ──────────────────────────────────────────────────
 window.AUDIO_ENGINE = 'iframe'; // Force IFrame engine for ALL browsers including Chrome
+let activeEngine = window.AUDIO_ENGINE; // Tracks the currently running engine dynamically
 
 if (navigator.brave && navigator.brave.isBrave) {
     navigator.brave.isBrave().then(isBrave => {
@@ -144,7 +147,7 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
-// ─── BLAZING FAST NATIVE ENGINE (CHROME/SAFARI) ──────────────────────────────────────
+// ─── NATIVE ENGINE (CHROME/SAFARI & BACKGROUND FALLBACK) ─────────────────────────
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
 
@@ -177,8 +180,9 @@ function getStreamUrl(videoId) {
     return `${base}/latest_version?id=${videoId}&itag=140`;
 }
 
+// Secretly loads the next track into the browser's cache for 0-delay playback
 function preloadNextTrackInQueue() {
-    if (window.AUDIO_ENGINE !== 'native' || window.OCTAVE.currentIndex < 0) return;
+    if (window.OCTAVE.currentIndex < 0) return;
     const nextIdx = window.OCTAVE.currentIndex + 1;
     if (nextIdx < window.OCTAVE.queue.length) {
         const nextId = window.OCTAVE.queue[nextIdx].videoId;
@@ -201,20 +205,21 @@ const tryNextStream = (videoId) => {
     AUDIO.play().catch(() => {
         updatePlayIcons('fa-solid fa-play');
         window.OCTAVE.isPlaying = false;
+        window.OCTAVE.isTransitioning = false;
     });
 };
 
 AUDIO.addEventListener('playing', () => {
-    if (window.AUDIO_ENGINE !== 'native') return;
+    if (activeEngine !== 'native') return;
+    window.OCTAVE.isTransitioning = false; // Unlock buttons
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     startProgressTracking();
     syncMediaSessionPosition();
-    preloadNextTrackInQueue();
 });
 
 AUDIO.addEventListener('pause', () => {
-    if (window.AUDIO_ENGINE !== 'native') return;
+    if (activeEngine !== 'native') return;
     window.OCTAVE.isPlaying = false;
     const fpIcon = document.querySelector('#fp-play i');
     if (fpIcon && !fpIcon.classList.contains('fa-spinner')) {
@@ -224,22 +229,20 @@ AUDIO.addEventListener('pause', () => {
 });
 
 AUDIO.addEventListener('ended', () => {
-    if (window.AUDIO_ENGINE !== 'native') return;
+    if (activeEngine !== 'native') return;
     handleTrackEnded();
 });
 
 AUDIO.addEventListener('error', () => {
-    if (window.AUDIO_ENGINE !== 'native') return;
-    
+    if (activeEngine !== 'native') return;
     window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
-    
     if (window.OCTAVE.currentIndex >= 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         const currentPos = AUDIO.currentTime || 0;
         AUDIO.src = getStreamUrl(track.videoId);
         AUDIO.currentTime = currentPos;
         AUDIO.load();
-        AUDIO.play().catch(() => {});
+        AUDIO.play().catch(() => { window.OCTAVE.isTransitioning = false; });
     }
 });
 
@@ -266,7 +269,7 @@ window.onYouTubeIframeAPIReady = () => {
             onReady: e => {
                 ytReady = true;
                 e.target.setVolume(100);
-                if (window.AUDIO_ENGINE === 'iframe' && window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
+                if (activeEngine === 'iframe' && window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
                     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
                     YTP.cueVideoById({ videoId: track.videoId });
                 }
@@ -277,15 +280,19 @@ window.onYouTubeIframeAPIReady = () => {
 };
 
 function onYTS(e) {
-    if (window.AUDIO_ENGINE !== 'iframe') return;
+    if (activeEngine !== 'iframe') return;
     if (e.data === YT.PlayerState.PLAYING) {
+        window.OCTAVE.isTransitioning = false; // Unlock buttons
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
         startProgressTracking();
         syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
         window.OCTAVE.isPlaying = false;
-        updatePlayIcons('fa-solid fa-play');
+        const fpIcon = document.querySelector('#fp-play i');
+        if (fpIcon && !fpIcon.classList.contains('fa-spinner')) {
+            updatePlayIcons('fa-solid fa-play');
+        }
         clearInterval(progressTimer);
     } else if (e.data === YT.PlayerState.ENDED) {
         handleTrackEnded();
@@ -309,6 +316,8 @@ function handleTrackEnded() {
 }
 
 window.playNextLogic = () => {
+    if (window.OCTAVE.isTransitioning) return; // Spam prevention
+    
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else if (window.generateDiscoverMix) {
@@ -330,7 +339,7 @@ function updatePlayIcons(iconClass) {
 window.togglePlay = () => {
     if (window.OCTAVE.currentIndex === -1) return;
     
-    if (window.AUDIO_ENGINE === 'iframe') {
+    if (activeEngine === 'iframe') {
         if (!YTP) return;
         window.OCTAVE.isPlaying ? YTP.pauseVideo() : YTP.playVideo();
     } else {
@@ -346,10 +355,10 @@ function startProgressTracking() {
         let current = 0;
         let total = 0;
 
-        if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
+        if (activeEngine === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
             current = YTP.getCurrentTime();
             total = YTP.getDuration();
-        } else if (window.AUDIO_ENGINE === 'native') {
+        } else if (activeEngine === 'native') {
             current = AUDIO.currentTime;
             total = AUDIO.duration;
         }
@@ -364,6 +373,12 @@ function startProgressTracking() {
             if (fpProg) fpProg.style.width = `${percent}%`;
             if (currTime) currTime.textContent = formatTime(current);
             if (totTime) totTime.textContent = formatTime(total);
+
+            // Trigger the 50-second preloading logic
+            if (current >= 50 && !window.OCTAVE.nextTrackPreloaded) {
+                preloadNextTrackInQueue();
+                window.OCTAVE.nextTrackPreloaded = true;
+            }
         }
     }, 500);
 }
@@ -398,9 +413,9 @@ function updateMediaSession(track) {
 
     try {
         navigator.mediaSession.setActionHandler('seekto', (details) => {
-            if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
+            if (activeEngine === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
                 YTP.seekTo(details.seekTime, true);
-            } else if (window.AUDIO_ENGINE === 'native' && AUDIO.duration) {
+            } else if (activeEngine === 'native' && AUDIO.duration) {
                 AUDIO.currentTime = details.seekTime;
             }
             syncMediaSessionPosition();
@@ -413,10 +428,10 @@ function syncMediaSessionPosition() {
     let duration = 0;
     let position = 0;
 
-    if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.getDuration === 'function') {
+    if (activeEngine === 'iframe' && YTP && typeof YTP.getDuration === 'function') {
         duration = YTP.getDuration();
         position = YTP.getCurrentTime();
-    } else if (window.AUDIO_ENGINE === 'native') {
+    } else if (activeEngine === 'native') {
         duration = AUDIO.duration;
         position = AUDIO.currentTime;
     }
@@ -433,8 +448,18 @@ function syncMediaSessionPosition() {
 }
 
 window.playTrackByIndex = (index) => {
+    // Spam click prevention block
+    if (window.OCTAVE.isTransitioning) return; 
+    
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     const track = window.OCTAVE.queue[index];
+
+    // Lock buttons and reset preloader
+    window.OCTAVE.isTransitioning = true;
+    window.OCTAVE.nextTrackPreloaded = false;
+    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 4000); // Failsafe unlock
+
+    updatePlayIcons('fa-solid fa-spinner fa-spin'); // Show visual loading feedback
     
     const hour = new Date().getHours();
     let tod = 'night';
@@ -463,15 +488,32 @@ window.playTrackByIndex = (index) => {
     updatePlayerUI(track);
     updateMediaSession(track);
 
+    // DYNAMIC BACKGROUND SWAPPER:
+    // If the browser tab is hidden/locked, Iframe will refuse to load the next video.
+    // We instantly swap to the Native Engine to guarantee uninterrupted playback!
     if (window.AUDIO_ENGINE === 'iframe') {
-        if (ytReady && YTP) YTP.loadVideoById({ videoId: track.videoId });
+        if (document.hidden) {
+            activeEngine = 'native';
+        } else {
+            activeEngine = 'iframe';
+        }
     } else {
+        activeEngine = 'native';
+    }
+
+    if (activeEngine === 'iframe') {
         AUDIO.pause();
+        if (ytReady && YTP) {
+            YTP.loadVideoById({ videoId: track.videoId });
+        }
+    } else {
+        if (YTP && typeof YTP.pauseVideo === 'function') YTP.pauseVideo();
         tryNextStream(track.videoId); 
     }
 };
 
 window.playTrack = (track) => {
+    if (window.OCTAVE.isTransitioning) return; // Spam prevention
     window.OCTAVE.isNextTrackManual = true; 
     window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
@@ -484,16 +526,18 @@ window.playTrack = (track) => {
 };
 
 window.playPrev = () => {
+    if (window.OCTAVE.isTransitioning) return; // Spam prevention
+    
     let current = 0;
-    if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
+    if (activeEngine === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
         current = YTP.getCurrentTime();
-    } else if (window.AUDIO_ENGINE === 'native') {
+    } else if (activeEngine === 'native') {
         current = AUDIO.currentTime;
     }
 
     if (current > 3) {
-        if (window.AUDIO_ENGINE === 'iframe' && YTP) YTP.seekTo(0);
-        else if (window.AUDIO_ENGINE === 'native') AUDIO.currentTime = 0;
+        if (activeEngine === 'iframe' && YTP) YTP.seekTo(0);
+        else if (activeEngine === 'native') AUDIO.currentTime = 0;
     } else if (window.OCTAVE.currentIndex > 0) {
         window.OCTAVE.isNextTrackManual = true;
         window.playTrackByIndex(window.OCTAVE.currentIndex - 1);
@@ -669,9 +713,9 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     const percentage = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     
     let totalTime = 0;
-    if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.getDuration === 'function') {
+    if (activeEngine === 'iframe' && YTP && typeof YTP.getDuration === 'function') {
         totalTime = YTP.getDuration();
-    } else if (window.AUDIO_ENGINE === 'native') {
+    } else if (activeEngine === 'native') {
         totalTime = AUDIO.duration;
     }
 
@@ -685,9 +729,9 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
         if (currTime) currTime.textContent = formatTime(totalTime * percentage);
 
         if (isFinalSeek) {
-            if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
+            if (activeEngine === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
                 YTP.seekTo(totalTime * percentage, true);
-            } else if (window.AUDIO_ENGINE === 'native') {
+            } else if (activeEngine === 'native') {
                 AUDIO.currentTime = totalTime * percentage;
             }
             syncMediaSessionPosition();
@@ -874,7 +918,7 @@ window.fetchFullArtistProfile = async (artist) => {
 document.addEventListener('DOMContentLoaded', () => {
     
     if (window.OCTAVE.currentIndex === -1 && window.OCTAVE.recentPlayed.length > 0) {
-        window.OCTAVE.queue = [window.OCTAVE.recentPlayed[0]];
+        window.OCTAVE.queue =[window.OCTAVE.recentPlayed[0]];
         window.OCTAVE.currentIndex = 0;
         window.saveCache();
     }
@@ -884,11 +928,9 @@ document.addEventListener('DOMContentLoaded', () => {
         updatePlayerUI(track);
         updateMediaSession(track); 
         
-        if (window.AUDIO_ENGINE === 'native') {
-            getFastestStreamUrl(track.videoId).then(url => {
-                AUDIO.src = url;
-                AUDIO.load();
-            });
+        if (activeEngine === 'native') {
+            AUDIO.src = getStreamUrl(track.videoId);
+            AUDIO.load();
         }
     }
 
@@ -916,6 +958,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
     
     document.getElementById('fp-next')?.addEventListener('click', () => {
+        if (window.OCTAVE.isTransitioning) return; // Spam prevention
+        
         if (window.OCTAVE.currentIndex >= 0) {
             const timeListened = Date.now() - window.OCTAVE.trackStartTime;
             if (timeListened < 15000) { 
