@@ -1,6 +1,6 @@
 // ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Forced IFrame Engine for all browsers to fix Chrome playback
+// Chrome uses Native + Cobalt API | Brave uses IFrame (Untouched)
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -32,16 +32,17 @@ window.OCTAVE = {
 };
 
 // ─── HYBRID ENGINE ROUTER ──────────────────────────────────────────────────
-window.AUDIO_ENGINE = 'iframe'; // Force IFrame engine for ALL browsers including Chrome
+window.AUDIO_ENGINE = 'native'; // Default to native for Chrome/Safari
 
 if (navigator.brave && navigator.brave.isBrave) {
     navigator.brave.isBrave().then(isBrave => {
         if (isBrave) {
+            window.AUDIO_ENGINE = 'iframe';
             console.log("Octave: Brave detected. Using Instant IFrame Engine.");
         }
     });
 } else {
-    console.log("Octave: Chrome/Safari detected. Forced to Instant IFrame Engine.");
+    console.log("Octave: Chrome/Safari detected. Using Native Engine with Cobalt API.");
 }
 
 window.initTrackStats = (videoId) => {
@@ -172,29 +173,73 @@ function unlockAudioEngine() {
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
-function getStreamUrl(videoId) {
+// Chrome Fix: Aggressive Cobalt API fetch with Native Fallback
+async function fetchDirectStreamUrl(videoId) {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        
+        const response = await fetch('https://api.cobalt.tools/api/json', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                url: 'https://www.youtube.com/watch?v=' + videoId,
+                isAudioOnly: true,
+                aFormat: 'mp3'
+            }),
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data && data.url) {
+                return data.url;
+            }
+        }
+    } catch (e) {
+        console.warn("Octave: Cobalt API failed. Trying fallback redirect...");
+    }
+
+    // Fallback if Cobalt fails
     const base = window.INVIDIOUS[window.invIdx];
     return `${base}/latest_version?id=${videoId}&itag=140`;
 }
 
-function preloadNextTrackInQueue() {
+async function preloadNextTrackInQueue() {
     if (window.AUDIO_ENGINE !== 'native' || window.OCTAVE.currentIndex < 0) return;
     const nextIdx = window.OCTAVE.currentIndex + 1;
     if (nextIdx < window.OCTAVE.queue.length) {
         const nextId = window.OCTAVE.queue[nextIdx].videoId;
-        PRELOAD_AUDIO.src = getStreamUrl(nextId);
-        preloadedVideoId = nextId;
-        PRELOAD_AUDIO.load(); 
+        const url = await fetchDirectStreamUrl(nextId);
+        if (url) {
+            PRELOAD_AUDIO.src = url;
+            preloadedVideoId = nextId;
+            PRELOAD_AUDIO.load(); 
+        }
     }
 }
 
-const tryNextStream = (videoId) => {
-    updatePlayIcons('fa-solid fa-spinner fa-spin'); 
+const tryNextStream = async (videoId) => {
+    updatePlayIcons('fa-solid fa-spinner fa-spin'); // Show spinner while fetching
     
     if (preloadedVideoId === videoId && PRELOAD_AUDIO.src) {
         AUDIO.src = PRELOAD_AUDIO.src;
     } else {
-        AUDIO.src = getStreamUrl(videoId);
+        const url = await fetchDirectStreamUrl(videoId);
+        if (url) {
+            AUDIO.src = url;
+        } else {
+            // Absolute failure, skip track automatically
+            updatePlayIcons('fa-solid fa-play');
+            window.OCTAVE.isPlaying = false;
+            window.playNextLogic();
+            return;
+        }
     }
     
     AUDIO.load();
@@ -228,7 +273,7 @@ AUDIO.addEventListener('ended', () => {
     handleTrackEnded();
 });
 
-AUDIO.addEventListener('error', () => {
+AUDIO.addEventListener('error', async () => {
     if (window.AUDIO_ENGINE !== 'native') return;
     
     window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
@@ -236,15 +281,20 @@ AUDIO.addEventListener('error', () => {
     if (window.OCTAVE.currentIndex >= 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         const currentPos = AUDIO.currentTime || 0;
-        AUDIO.src = getStreamUrl(track.videoId);
-        AUDIO.currentTime = currentPos;
-        AUDIO.load();
-        AUDIO.play().catch(() => {});
+        
+        // Let's re-fetch just in case the link expired
+        const newUrl = await fetchDirectStreamUrl(track.videoId);
+        if (newUrl) {
+            AUDIO.src = newUrl;
+            AUDIO.currentTime = currentPos;
+            AUDIO.load();
+            AUDIO.play().catch(() => {});
+        }
     }
 });
 
 
-// ─── IFRAME ENGINE SETUP (BRAVE / NOW ALSO CHROME) ─────────────────────────────
+// ─── IFRAME ENGINE SETUP (BRAVE - 100% UNTOUCHED) ─────────────────────────────
 let YTP = null;
 let ytReady = false;
 
@@ -885,9 +935,11 @@ document.addEventListener('DOMContentLoaded', () => {
         updateMediaSession(track); 
         
         if (window.AUDIO_ENGINE === 'native') {
-            getFastestStreamUrl(track.videoId).then(url => {
-                AUDIO.src = url;
-                AUDIO.load();
+            fetchDirectStreamUrl(track.videoId).then(url => {
+                if (url) {
+                    AUDIO.src = url;
+                    AUDIO.load();
+                }
             });
         }
     }
