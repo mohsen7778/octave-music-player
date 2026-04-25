@@ -1,26 +1,20 @@
 // ============================================================
 // algorithm.js — Octave Top-Notch Auto-DJ & Prediction Engine
-// Features: Silent Background Batching, Triple-Seed Blending, Strict Filtering
 // ============================================================
 
-// --- 1. TRACK SCORING ENGINE (UPGRADED) ---
 window.calculateTrackScore = (track) => {
     if (!track || !track.videoId) return -100;
     const stats = window.OCTAVE.playStats[track.videoId] || { plays: 0, skips: 0, completes: 0, manual: 0, activeViews: 0 };
     
     let score = 0;
     score += (stats.plays * 1);
-    score += (stats.completes * 3);  // Higher reward for finishing
-    score += (stats.manual * 5);     // High reward for manual search/click
+    score += (stats.completes * 3);  
+    score += (stats.manual * 5);     
     score += (stats.activeViews * 1);
-    
-    // Aggressive Penalty for skips
     score -= (stats.skips * 10); 
     
-    // Massive reward for liking the song
     if (window.OCTAVE.liked && window.OCTAVE.liked[track.videoId]) score += 20;
     
-    // Playlist presence reward
     let inPlaylist = false;
     if (window.OCTAVE.playlists) {
         Object.values(window.OCTAVE.playlists).forEach(pl => {
@@ -32,7 +26,6 @@ window.calculateTrackScore = (track) => {
     return score;
 };
 
-// --- 2. SILENT BACKGROUND BATCH FETCHER ---
 window.isFetchingBatch = false;
 
 window.fetchAutoDjBatch = async () => {
@@ -40,29 +33,25 @@ window.fetchAutoDjBatch = async () => {
     window.isFetchingBatch = true;
 
     try {
-        // Pool all known tracks to find the ultimate seeds
         const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || []), ...(window.OCTAVE.queue ||[])];
         const uniqueKnown = Array.from(new Map(allKnown.map(t =>[t.videoId, t])).values());
         
-        // Grab the top 3 highest scored tracks that haven't been overplayed in this exact session
         const topSeeds = uniqueKnown
             .filter(t => !window.OCTAVE.sessionHistory.includes(t.videoId))
             .sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a))
             .slice(0, 3);
             
-        // Fallback to recent track if no high scores found
         if (topSeeds.length === 0 && window.OCTAVE.recentPlayed.length > 0) {
             topSeeds.push(window.OCTAVE.recentPlayed[0]);
         }
-        if (topSeeds.length === 0) return; // Nothing to seed from
+        if (topSeeds.length === 0) return; 
 
         let candidatePool =[];
         
-        // Race all 3 seeds concurrently to Invidious
         const fetchPromises = topSeeds.map((seed, index) => {
-            const base = window.INVIDIOUS[(window.invIdx + index) % window.INVIDIOUS.length];
+            const base = window.INVIDIOUS[(window.invIdx + Math.floor(Math.random() * 3)) % window.INVIDIOUS.length];
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 6000); // Strict timeout to free resources
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout allowance
             
             return fetch(`${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`, { signal: controller.signal })
                 .then(r => r.json())
@@ -73,16 +62,27 @@ window.fetchAutoDjBatch = async () => {
                 .finally(() => clearTimeout(timeoutId));
         });
 
-        // Wait silently in the background
         await Promise.all(fetchPromises);
 
-        // STRICT MUSIC FIREWALL (Blocks Vlogs, News, Podcasts, etc.)
+        // FALLBACK: If seeds fail, grab popular music so queue doesn't die!
+        if (candidatePool.length === 0) {
+            try {
+                const base = window.INVIDIOUS[window.invIdx];
+                const r = await fetch(`${base}/api/v1/popular?videoCategory=10`);
+                if (r.ok) {
+                    const d = await r.json();
+                    candidatePool.push(...d);
+                }
+            } catch(e) {}
+        }
+
         const badWords =['tutorial', 'vlog', 'news', 'podcast', 'interview', 'review', 'unboxing', 'live', 'type beat', 'full album', 'documentary'];
         
         const freshRecs = candidatePool.filter(v => {
-            const isShortEnough = v.lengthSeconds && v.lengthSeconds < 600 && v.lengthSeconds > 60; // 1 to 10 mins strictly
+            // Very forgiving length check. If missing length, let it pass rather than killing the queue!
+            const isShortEnough = !v.lengthSeconds || (v.lengthSeconds < 600 && v.lengthSeconds > 30); 
             const notPlayedThisSession = !window.OCTAVE.sessionHistory.includes(v.videoId);
-            const notPenalized = window.calculateTrackScore({ videoId: v.videoId }) >= -5; // Ban heavily skipped songs
+            const notPenalized = window.calculateTrackScore({ videoId: v.videoId }) >= -5; 
             
             const titleLower = (v.title || '').toLowerCase();
             const authorLower = (v.author || '').toLowerCase();
@@ -91,11 +91,9 @@ window.fetchAutoDjBatch = async () => {
             return isShortEnough && notPlayedThisSession && notPenalized && noBadWords;
         });
 
-        // Deduplicate and Shuffle
         const uniqueRecs = Array.from(new Map(freshRecs.map(t => [t.videoId, t])).values());
         uniqueRecs.sort(() => 0.5 - Math.random());
         
-        // Take the absolute best 5 and securely push them to the current queue
         const next5 = uniqueRecs.slice(0, 5).map(pick => ({
             videoId: pick.videoId, 
             title: pick.title, 
@@ -115,39 +113,31 @@ window.fetchAutoDjBatch = async () => {
     }
 };
 
-// --- 3. QUEUE MANAGER (INTERCEPTS PLAYBACK TO FILL BACKGROUND) ---
-// We wrap the original playTrackByIndex so every time a song starts, it checks if it needs to fetch more.
 setTimeout(() => {
     if (window.playTrackByIndex) {
         const originalPlayTrackByIndex = window.playTrackByIndex;
         window.playTrackByIndex = (index) => {
             originalPlayTrackByIndex(index);
-            
-            // If there are 2 or fewer songs left in the queue, fetch 5 more silently!
             if (window.OCTAVE.queue.length - index <= 2) {
-                // Give the UI 2 seconds to settle the new song, then secretly fetch
                 setTimeout(() => {
                     window.fetchAutoDjBatch();
                 }, 2000);
             }
         };
     }
-}, 500); // Short delay to ensure player.js has loaded first
+}, 500); 
 
-// The main Next button logic
 window.playNextLogic = async () => {
     if (window.OCTAVE.isTransitioning) return;
     
-    // If we surprisingly hit the absolute end (meaning background fetch failed or user clicked too fast)
     if (window.OCTAVE.currentIndex >= window.OCTAVE.queue.length - 1) {
         const fpPlay = document.querySelector('#fp-play i');
-        if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin'; // Only show loader when desperately needed
-        
+        if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin'; 
         await window.fetchAutoDjBatch();
     }
 
     if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-        window.OCTAVE.isNextTrackManual = false; // Flag as Auto-DJ choice
+        window.OCTAVE.isNextTrackManual = false; 
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else {
         window.OCTAVE.isPlaying = false;
@@ -155,10 +145,9 @@ window.playNextLogic = async () => {
         if (fpPlay) fpPlay.className = 'fa-solid fa-play';
     }
 };
-window.playNext = window.playNextLogic; // Fallback mapping
+window.playNext = window.playNextLogic; 
 
-// --- 4. VISUAL MANUAL DISCOVER MIX ---
-// This is triggered ONLY when they click the "Discover Mix" button. It shows the UI intentionally.
+// FIXED: MANUAL DISCOVER MIX
 window.generateDiscoverMix = async () => {
     const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
     if (allKnown.length === 0) {
@@ -167,9 +156,7 @@ window.generateDiscoverMix = async () => {
     }
 
     const dynamicView = document.getElementById('dynamic-view');
-    const originalHTML = dynamicView.innerHTML;
     
-    // Show beautiful loading UI since this is a manual request
     dynamicView.innerHTML = `
         <div style="padding: 20px;">
             <button class="icon-btn" onclick="document.querySelector('.nav-item.active').click()"><i class="fa-solid fa-arrow-left"></i></button>
@@ -181,25 +168,30 @@ window.generateDiscoverMix = async () => {
         </div>
     `;
 
-    // Empty the queue and force a massive batch fetch
+    // Save backup just in case API fails completely
+    const backupQueue = [...window.OCTAVE.queue];
+    const backupIndex = window.OCTAVE.currentIndex;
+
     window.OCTAVE.queue =[];
     window.OCTAVE.currentIndex = -1;
     
-    await window.fetchAutoDjBatch(); // Grabs 5
-    await window.fetchAutoDjBatch(); // Grabs 5 more (10 total)
+    await window.fetchAutoDjBatch(); 
+    await window.fetchAutoDjBatch(); 
 
     if (window.OCTAVE.queue.length > 0) {
-        window.OCTAVE.isNextTrackManual = true; // Mark as manual intent
+        window.OCTAVE.isNextTrackManual = true; 
         window.playTrackByIndex(0);
         const homeTab = document.querySelector('.nav-item[data-tab="home"]');
         if (homeTab) homeTab.click();
     } else {
-        dynamicView.innerHTML = originalHTML;
+        window.OCTAVE.queue = backupQueue;
+        window.OCTAVE.currentIndex = backupIndex;
         alert("Algorithm failed to connect to network. Try again.");
+        const homeTab = document.querySelector('.nav-item[data-tab="home"]');
+        if (homeTab) homeTab.click(); // Safely triggers a perfect UI restore
     }
 };
 
-// --- 5. STATIC DATA FETCHERS ---
 window.fetchDailyRecommendations = async () => {
     if (!window.OCTAVE) return;
     const now = Date.now();
