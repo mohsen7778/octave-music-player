@@ -1,6 +1,6 @@
 // ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Chrome Native Engine (Perfected Pipeline) | Brave IFrame
+// Chrome Native Engine (No Auto-Skip / True Gesture Chain) | Brave IFrame
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -165,8 +165,6 @@ let audioUnlocked = false;
 function unlockAudioForSafari() {
     if (audioUnlocked) return;
     audioUnlocked = true;
-    
-    // Only unlocking AudioContext. Removed AUDIO.play() override to protect gesture chain.
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const buf = ctx.createBuffer(1, 1, 22050);
@@ -180,52 +178,44 @@ function unlockAudioForSafari() {
 document.addEventListener('click', unlockAudioForSafari, { once: true });
 document.addEventListener('touchstart', unlockAudioForSafari, { once: true });
 
-// FIXED FETCHER: Returns a URL no matter what. Solves the rapid skip to Brew Mix.
-function getDirectAudioUrl(videoId) {
-    return new Promise((resolve) => {
-        let resolved = false;
-        const controllers = [];
-        
-        const racers = [...window.PIPED].sort(() => 0.5 - Math.random()).slice(0, 3);
-        
-        racers.forEach(base => {
-            const controller = new AbortController();
-            controllers.push(controller);
-            fetch(`${base}/streams/${videoId}`, { signal: controller.signal })
-                .then(res => res.json())
-                .then(data => {
-                    if (data && data.audioStreams && !resolved) {
-                        const stream = data.audioStreams.find(s => String(s.itag) === '140') || data.audioStreams[0];
-                        if (stream && stream.url) {
-                            resolved = true;
-                            controllers.forEach(c => c.abort());
-                            resolve(stream.url);
-                        }
-                    }
-                }).catch(() => {});
-        });
-
-        // If APIs fail (CORS block), fallback after 2.5s to prevent rapid queue skipping
-        setTimeout(() => {
-            if (!resolved) {
-                resolved = true;
-                controllers.forEach(c => c.abort());
-                const fallbackInv = window.INVIDIOUS[window.invIdx];
-                resolve(`${fallbackInv}/latest_version?id=${videoId}&itag=140`);
+async function getDirectAudioUrl(videoId) {
+    try {
+        const base = window.PIPED[window.pipedIdx];
+        const res = await fetch(`${base}/streams/${videoId}`);
+        if (res.ok) {
+            const data = await res.json();
+            const stream = data.audioStreams?.find(s => String(s.itag) === '140') || data.audioStreams?.[0];
+            if (stream && stream.url) {
+                return stream.url;
             }
-        }, 2500);
-    });
+        }
+    } catch (e) {}
+
+    // ALWAYS RETURN A VALID URL, NEVER RETURN NULL. 
+    // By returning this, the <audio> element bypasses JS CORS blocks natively.
+    const fallbackInv = window.INVIDIOUS[window.invIdx];
+    return `${fallbackInv}/latest_version?id=${videoId}&itag=140`;
 }
 
 AUDIO.addEventListener('error', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
     
-    console.error("Stable media stream broken. Skipping to next track.");
+    // NO AUTO SKIP. Instead, wait 2.5 seconds and retry the EXACT SAME SONG.
+    console.error("Audio stream failed. Retrying track on new server...");
     
-    // 1 second buffer to completely prevent infinite error loop skipping
-    setTimeout(() => {
-        window.playNextLogic();
-    }, 1000);
+    window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
+    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED.length;
+    
+    if (window.OCTAVE.currentIndex >= 0) {
+        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        const fallbackUrl = `${window.INVIDIOUS[window.invIdx]}/latest_version?id=${track.videoId}&itag=140`;
+        
+        setTimeout(() => {
+            AUDIO.src = fallbackUrl;
+            AUDIO.load();
+            AUDIO.play().catch(() => {});
+        }, 2500); 
+    }
 });
 
 AUDIO.addEventListener('playing', () => {
@@ -493,38 +483,30 @@ window.playTrackByIndex = (index) => {
     if (window.AUDIO_ENGINE === 'iframe') {
         if (ytReady && YTP) YTP.loadVideoById({ videoId: track.videoId });
     } else {
+        // EXACT CHROME GESTURE FIX: No 'await' pauses inside the play chain.
         AUDIO.pause();
         const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNyAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
         AUDIO.src = SILENT_MP3;
         
         updatePlayIcons('fa-solid fa-spinner fa-spin');
         
-        // PERFECT GESTURE CHAIN: .then() preserves the user interaction token
         AUDIO.play().then(() => {
             getDirectAudioUrl(track.videoId).then((url) => {
-                if (url) {
-                    AUDIO.src = url;
-                    AUDIO.load();
-                    AUDIO.play().catch(() => {
-                        updatePlayIcons('fa-solid fa-play');
-                        window.OCTAVE.isPlaying = false;
-                    });
-                } else {
+                AUDIO.src = url;
+                AUDIO.load();
+                AUDIO.play().catch(() => {
                     updatePlayIcons('fa-solid fa-play');
-                    window.playNextLogic();
-                }
+                    window.OCTAVE.isPlaying = false;
+                });
             });
         }).catch(() => {
-            // Fallback follows the exact same intact promise chain
             getDirectAudioUrl(track.videoId).then((url) => {
-                if (url) {
-                    AUDIO.src = url;
-                    AUDIO.load();
-                    AUDIO.play().catch(()=>{});
-                } else {
+                AUDIO.src = url;
+                AUDIO.load();
+                AUDIO.play().catch(() => {
                     updatePlayIcons('fa-solid fa-play');
-                    window.playNextLogic();
-                }
+                    window.OCTAVE.isPlaying = false;
+                });
             });
         });
     }
