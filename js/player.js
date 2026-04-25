@@ -1,6 +1,6 @@
 // ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Restored Dual Engine & Fixed Background Auto-Play
+// Fixed: Direct Google CDN Fetching for Chrome / IFrame for Brave
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -32,7 +32,7 @@ window.OCTAVE = {
 };
 
 // ─── HYBRID ENGINE ROUTER ──────────────────────────────────────────────────
-window.AUDIO_ENGINE = 'native'; // Default to native proxy for Chrome/Safari
+window.AUDIO_ENGINE = 'native'; // Default to Native `<audio>` for Chrome/Safari
 
 if (navigator.brave && navigator.brave.isBrave) {
     navigator.brave.isBrave().then(isBrave => {
@@ -42,7 +42,7 @@ if (navigator.brave && navigator.brave.isBrave) {
         }
     });
 } else {
-    console.log("Octave: Chrome/Safari detected. Using Native Proxy Engine.");
+    console.log("Octave: Chrome/Safari detected. Using Native Direct-CDN Engine.");
 }
 
 window.initTrackStats = (videoId) => {
@@ -151,6 +151,7 @@ AUDIO.preload = 'auto';
 
 const PRELOAD_AUDIO = new Audio(); 
 PRELOAD_AUDIO.preload = 'auto';
+let preloadedVideoId = null;
 
 let audioUnlocked = false;
 function unlockAudioForSafari() {
@@ -169,27 +170,49 @@ function unlockAudioForSafari() {
 document.addEventListener('click', unlockAudioForSafari, { once: true });
 document.addEventListener('touchstart', unlockAudioForSafari, { once: true });
 
-// Chrome CORS Fix: Let the native HTML5 audio element load it directly without JS Fetch racing
-function getStreamUrl(videoId) {
-    const base = window.INVIDIOUS[window.invIdx];
-    return `${base}/latest_version?id=${videoId}&itag=140&local=true`;
+// Chrome Fix: Fetch the direct Google Video stream URL to bypass proxy blocking
+async function fetchDirectStreamUrl(videoId) {
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        try {
+            const res = await fetch(`${base}/api/v1/videos/${videoId}?fields=adaptiveFormats`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            
+            // Extract the direct Google CDN URL for standard m4a audio
+            const audioStream = data.adaptiveFormats.find(f => f.itag === '140' || f.itag === 140);
+            if (audioStream && audioStream.url) {
+                window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length; 
+                return audioStream.url;
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    // Absolute fallback
+    return `${window.INVIDIOUS[window.invIdx]}/latest_version?id=${videoId}&itag=140&local=true`;
 }
 
-function preloadNextTrackInQueue() {
+async function preloadNextTrackInQueue() {
     if (window.AUDIO_ENGINE !== 'native' || window.OCTAVE.currentIndex < 0) return;
     const nextIdx = window.OCTAVE.currentIndex + 1;
     if (nextIdx < window.OCTAVE.queue.length) {
         const nextId = window.OCTAVE.queue[nextIdx].videoId;
-        PRELOAD_AUDIO.src = getStreamUrl(nextId);
-        PRELOAD_AUDIO.load(); 
+        const url = await fetchDirectStreamUrl(nextId);
+        if (url) {
+            PRELOAD_AUDIO.src = url;
+            preloadedVideoId = nextId;
+            PRELOAD_AUDIO.load(); 
+        }
     }
 }
 
-const tryNextStream = (videoId) => {
-    if (PRELOAD_AUDIO.src && PRELOAD_AUDIO.src.includes(videoId)) {
+const tryNextStream = async (videoId) => {
+    if (preloadedVideoId === videoId && PRELOAD_AUDIO.src) {
         AUDIO.src = PRELOAD_AUDIO.src;
     } else {
-        AUDIO.src = getStreamUrl(videoId);
+        const url = await fetchDirectStreamUrl(videoId);
+        if (url) AUDIO.src = url;
     }
     
     AUDIO.load();
@@ -217,17 +240,19 @@ AUDIO.addEventListener('ended', () => {
     handleTrackEnded();
 });
 
-AUDIO.addEventListener('error', () => {
+AUDIO.addEventListener('error', async () => {
     if (window.AUDIO_ENGINE !== 'native') return;
-    // If the active server fails or is blocked, instantly rotate to the next one and resume
-    window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
+    // If the Google CDN link expires mid-play, fetch a brand new one and resume
     if (window.OCTAVE.currentIndex >= 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         const currentPos = AUDIO.currentTime || 0;
-        AUDIO.src = getStreamUrl(track.videoId);
-        AUDIO.currentTime = currentPos;
-        AUDIO.load();
-        AUDIO.play().catch(() => {});
+        const newUrl = await fetchDirectStreamUrl(track.videoId);
+        if (newUrl) {
+            AUDIO.src = newUrl;
+            AUDIO.currentTime = currentPos;
+            AUDIO.load();
+            AUDIO.play().catch(() => {});
+        }
     }
 });
 
@@ -284,7 +309,7 @@ function onYTS(e) {
 let progressTimer = null;
 let sleepTimerId = null;
 
-// AUTOPLAY QUEUE PROGRESSION LOGIC (Fix for Brave stopping after 1 track)
+// AUTOPLAY QUEUE PROGRESSION LOGIC
 window.playNextLogic = () => {
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
@@ -875,8 +900,12 @@ document.addEventListener('DOMContentLoaded', () => {
         updateMediaSession(track); 
         
         if (window.AUDIO_ENGINE === 'native') {
-            AUDIO.src = getStreamUrl(track.videoId);
-            AUDIO.load();
+            fetchDirectStreamUrl(track.videoId).then(url => {
+                if (url) {
+                    AUDIO.src = url;
+                    AUDIO.load();
+                }
+            });
         }
     }
 
