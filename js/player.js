@@ -157,9 +157,11 @@ let audioUnlocked = false;
 function unlockAudioEngine() {
     if (audioUnlocked) return;
     audioUnlocked = true;
-    
-    AUDIO.play().then(() => { AUDIO.pause(); }).catch(() => {});
-    
+    // ⚠️ CHROME FIX: Never call AUDIO.play() on an empty element.
+    // Chrome internally marks the audio element as broken on a rejected play()
+    // ("no supported source"), causing ALL future play() calls to silently fail.
+    // Brave recovers from this gracefully; Chrome does not.
+    // Only use a silent AudioContext buffer to satisfy the user-gesture unlock.
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const buf = ctx.createBuffer(1, 1, 22050);
@@ -191,21 +193,34 @@ function preloadNextTrackInQueue() {
     }
 }
 
+let _nativeTryCount = 0;
+
 const tryNextStream = (videoId) => {
-    updatePlayIcons('fa-solid fa-spinner fa-spin'); // Keeps the spinner UI so you know it's working
-    
-    if (preloadedVideoId === videoId && PRELOAD_AUDIO.src) {
+    _nativeTryCount = 0;
+    updatePlayIcons('fa-solid fa-spinner fa-spin');
+    _attemptNativePlay(videoId, true);
+};
+
+// CHROME FIX: Rotate through ALL Invidious instances on play() rejection
+// instead of giving up on the first failure. Covers CORS/proxy/stall failures.
+function _attemptNativePlay(videoId, allowPreload) {
+    if (allowPreload && preloadedVideoId === videoId && PRELOAD_AUDIO.src) {
         AUDIO.src = PRELOAD_AUDIO.src;
     } else {
         AUDIO.src = getStreamUrl(videoId);
     }
-    
     AUDIO.load();
     AUDIO.play().catch(() => {
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
+        _nativeTryCount++;
+        if (_nativeTryCount < window.INVIDIOUS.length) {
+            window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
+            _attemptNativePlay(videoId, false);
+        } else {
+            updatePlayIcons('fa-solid fa-play');
+            window.OCTAVE.isPlaying = false;
+        }
     });
-};
+}
 
 AUDIO.addEventListener('playing', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
@@ -214,6 +229,10 @@ AUDIO.addEventListener('playing', () => {
     startProgressTracking();
     syncMediaSessionPosition();
     preloadNextTrackInQueue();
+    // CHROME BACKGROUND FIX: Explicitly declare playback state.
+    // Without this, Chrome treats loading/seeking states as "not playing"
+    // and may suspend the page when backgrounded — killing audio.
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
 });
 
 AUDIO.addEventListener('pause', () => {
@@ -224,6 +243,7 @@ AUDIO.addEventListener('pause', () => {
         updatePlayIcons('fa-solid fa-play');
     }
     clearInterval(progressTimer);
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
 });
 
 AUDIO.addEventListener('ended', () => {
@@ -234,19 +254,47 @@ AUDIO.addEventListener('ended', () => {
 // REMOVED SKIP LOGIC: If a server fails, it just instantly rotates and tries the next one.
 AUDIO.addEventListener('error', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
-    
     window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
-    
     if (window.OCTAVE.currentIndex >= 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        const currentPos = AUDIO.currentTime || 0;
+        // ⚠️ CHROME FIX: Do NOT set AUDIO.currentTime before AUDIO.load().
+        // Setting currentTime on a freshly-assigned src fires ANOTHER error event
+        // in Chrome, creating an infinite error → rotate → error loop that
+        // burns through all Invidious instances and leaves audio dead.
         AUDIO.src = getStreamUrl(track.videoId);
-        AUDIO.currentTime = currentPos;
         AUDIO.load();
         AUDIO.play().catch(() => {});
     }
 });
 
+
+// ─── CHROME BACKGROUND & STALL RECOVERY ──────────────────────────────────────
+
+// Chrome may pause audio when a tab goes to background or screen locks,
+// then "forget" to resume it when the user returns. This detects that and
+// re-triggers play() immediately on tab focus restore.
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && window.AUDIO_ENGINE === 'native') {
+        if (window.OCTAVE.isPlaying && AUDIO.paused) {
+            AUDIO.play().catch(() => {});
+        }
+    }
+});
+
+// Chrome fires 'stalled' when a stream stops delivering data (bad instance,
+// slow proxy, etc). After a 5s grace window, rotate to the next instance.
+AUDIO.addEventListener('stalled', () => {
+    if (window.AUDIO_ENGINE !== 'native' || !window.OCTAVE.isPlaying) return;
+    setTimeout(() => {
+        if (window.OCTAVE.isPlaying && AUDIO.paused && window.OCTAVE.currentIndex >= 0) {
+            window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
+            const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+            AUDIO.src = getStreamUrl(track.videoId);
+            AUDIO.load();
+            AUDIO.play().catch(() => {});
+        }
+    }, 5000);
+});
 
 // ─── IFRAME ENGINE SETUP (BRAVE - 100% UNTOUCHED) ─────────────────────────────
 let YTP = null;
