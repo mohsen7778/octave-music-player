@@ -1,6 +1,7 @@
-// ============================================================
+ // ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Stable Version: Server Racing Engine (Native) | IFrame (Brave)
+// Detects Brave Browser for instant IFrame playback.
+// Falls back to Native <audio> Proxy for Chrome/Safari background play.
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -11,28 +12,28 @@ window.escapeHTML = (str) => {
 };
 
 window.OCTAVE = {
-    queue:[],
+    queue: [],
     currentIndex: -1,
     isPlaying: false,
     liked: {},
     playlists: {},
     recentPlayed: [],
-    recentSearches:[],
+    recentSearches: [],
     playStats: {}, 
     activeTrackForOptions: null,
-    dailyRecs: { timestamp: 0, tracks:[] },
-    trendingData: { timestamp: 0, tracks:[] },
+    dailyRecs: { timestamp: 0, tracks: [] },
+    trendingData: { timestamp: 0, tracks: [] },
     artistCache: {},
     selectedFont: localStorage.getItem('octave_font') || 'Plus Jakarta Sans',
-    sessionHistory:[], 
+    sessionHistory: [], 
     trackStartTime: 0,
     isNextTrackManual: true, 
     activeTrackViewed: false,
-    isDraggingProgress: false
+    isDraggingProgress: false // NEW: Tracks when the user is scrubbing the progress bar
 };
 
 // ─── HYBRID ENGINE ROUTER ──────────────────────────────────────────────────
-window.AUDIO_ENGINE = 'native'; 
+window.AUDIO_ENGINE = 'native'; // Default to proxy for Chrome/Safari
 
 if (navigator.brave && navigator.brave.isBrave) {
     navigator.brave.isBrave().then(isBrave => {
@@ -42,7 +43,7 @@ if (navigator.brave && navigator.brave.isBrave) {
         }
     });
 } else {
-    console.log("Octave: Chrome detected. Using Server Racing Engine.");
+    console.log("Octave: Chrome/Safari detected. Using Native Proxy Engine.");
 }
 
 window.initTrackStats = (videoId) => {
@@ -76,7 +77,7 @@ function loadCache() {
         window.OCTAVE.liked = parsed.liked || {};
         window.OCTAVE.playlists = parsed.playlists || {};
         window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
-        window.OCTAVE.recentSearches = parsed.recentSearches ||[];
+        window.OCTAVE.recentSearches = parsed.recentSearches || [];
         
         window.OCTAVE.playStats = parsed.playStats || {};
         Object.keys(window.OCTAVE.playStats).forEach(key => {
@@ -85,10 +86,10 @@ function loadCache() {
             }
         });
 
-        window.OCTAVE.queue = parsed.queue ||[];
+        window.OCTAVE.queue = parsed.queue || [];
         window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
-        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks:[] };
-        window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks:[] };
+        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks: [] };
+        window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks: [] };
         window.OCTAVE.artistCache = parsed.artistCache || {};
     }
 }
@@ -124,15 +125,7 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// ─── API INSTANCES ──────────────────────────────────────────────────────────
-window.PIPED = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.smnz.de',
-    'https://api.piped.projectsegfau.lt',
-    'https://piped-api.lunar.icu'
-];
-
-window.INVIDIOUS =[
+window.INVIDIOUS = [
     'https://inv.nadeko.net',
     'https://invidious.privacyredirect.com',
     'https://invidious.nerdvpn.de',
@@ -152,14 +145,14 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
     .catch(() => console.warn('Using fallback instances'));
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
-window.pipedIdx = Math.floor(Math.random() * window.PIPED.length);
 
-// ─── STABLE NATIVE ENGINE (CHROME) ──────────────────────────────────────────
+// ─── NATIVE ENGINE SETUP (CHROME/SAFARI) ──────────────────────────────────────
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
-AUDIO.setAttribute("playsinline", "true");
-AUDIO.setAttribute("webkit-playsinline", "true");
-AUDIO.crossOrigin = "anonymous";
+
+let streamQueue = [];   
+let streamQueueIdx = 0;
+let streamTimeout = null;
 
 let audioUnlocked = false;
 function unlockAudioForSafari() {
@@ -178,48 +171,42 @@ function unlockAudioForSafari() {
 document.addEventListener('click', unlockAudioForSafari, { once: true });
 document.addEventListener('touchstart', unlockAudioForSafari, { once: true });
 
-async function getDirectAudioUrl(videoId) {
-    // 1. Try Piped
-    for (let i = 0; i < window.PIPED.length; i++) {
-        const base = window.PIPED[(window.pipedIdx + i) % window.PIPED.length];
-        try {
-            const res = await fetch(`${base}/streams/${videoId}`);
-            if (res.ok) {
-                const data = await res.json();
-                const stream = data.audioStreams?.find(s => String(s.itag) === '140') || data.audioStreams?.[0];
-                if (stream && stream.url) {
-                    window.pipedIdx = (window.pipedIdx + i) % window.PIPED.length;
-                    return stream.url;
-                }
-            }
-        } catch (e) { continue; }
+function buildStreamQueue(videoId) {
+    const itags = [140, 251, 18];
+    const urls = [];
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        itags.forEach(itag => {
+            urls.push(`${base}/latest_version?id=${videoId}&itag=${itag}&local=true`);
+        });
     }
-
-    // 2. Try Invidious
-    const fallbackInv = window.INVIDIOUS[window.invIdx];
-    return `${fallbackInv}/latest_version?id=${videoId}&itag=140`;
+    return urls;
 }
 
-const tryNextStream = async (videoId) => {
-    updatePlayIcons('fa-solid fa-spinner fa-spin'); 
-    
-    const url = await getDirectAudioUrl(videoId);
-    
-    if (url) {
-        AUDIO.src = url;
-        AUDIO.load();
-        AUDIO.play().catch(() => {
-            updatePlayIcons('fa-solid fa-play');
-            window.OCTAVE.isPlaying = false;
-        });
-    } else {
+const tryNextStream = () => {
+    clearTimeout(streamTimeout);
+    if (streamQueueIdx >= streamQueue.length) {
+        console.warn('Octave: All stream sources failed.');
         updatePlayIcons('fa-solid fa-play');
         window.OCTAVE.isPlaying = false;
+        return;
     }
+    AUDIO.src = streamQueue[streamQueueIdx];
+    AUDIO.load();
+    AUDIO.play().catch(() => {});
+    
+    streamTimeout = setTimeout(() => {
+        if (!window.OCTAVE.isPlaying) {
+            console.warn('Stream too slow, skipping to next server...');
+            streamQueueIdx++;
+            tryNextStream();
+        }
+    }, 4000);
 };
 
 AUDIO.addEventListener('playing', () => {
     if (window.AUDIO_ENGINE !== 'native') return;
+    clearTimeout(streamTimeout); 
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     startProgressTracking();
@@ -238,8 +225,27 @@ AUDIO.addEventListener('ended', () => {
     handleTrackEnded();
 });
 
+AUDIO.addEventListener('error', () => {
+    if (window.AUDIO_ENGINE !== 'native') return;
+    clearTimeout(streamTimeout);
+    streamQueueIdx++;
+    if (streamQueueIdx < streamQueue.length) {
+        AUDIO.src = streamQueue[streamQueueIdx];
+        AUDIO.load();
+        AUDIO.play().catch(() => {});
+        streamTimeout = setTimeout(() => {
+            if (!window.OCTAVE.isPlaying) {
+                streamQueueIdx++;
+                AUDIO.dispatchEvent(new Event('error'));
+            }
+        }, 4000);
+    } else {
+        updatePlayIcons('fa-solid fa-play');
+        window.OCTAVE.isPlaying = false;
+    }
+});
 
-// ─── IFRAME ENGINE SETUP (BRAVE - UNTOUCHED) ──────────────────────────────────────────────
+// ─── IFRAME ENGINE SETUP (BRAVE) ──────────────────────────────────────────────
 let YTP = null;
 let ytReady = false;
 
@@ -291,18 +297,6 @@ function onYTS(e) {
 let progressTimer = null;
 let sleepTimerId = null;
 
-window.playNextLogic = () => {
-    if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-        window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-    } else if (window.generateDiscoverMix) {
-        window.generateDiscoverMix(); 
-    } else {
-        window.OCTAVE.isPlaying = false;
-        updatePlayIcons('fa-solid fa-play');
-        clearInterval(progressTimer);
-    }
-};
-
 function handleTrackEnded() {
     window.OCTAVE.isPlaying = false;
     clearInterval(progressTimer);
@@ -336,6 +330,7 @@ window.togglePlay = () => {
 function startProgressTracking() {
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
+        // Stop updating the UI if the user is dragging the scrubber
         if (!window.OCTAVE.isPlaying || window.OCTAVE.isDraggingProgress) return;
         
         let current = 0;
@@ -376,7 +371,7 @@ function updateMediaSession(track) {
     navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title,
         artist: track.author,
-        artwork:[
+        artwork: [
             { src: track.thumb, sizes: '96x96', type: 'image/jpeg' },
             { src: track.thumb, sizes: '128x128', type: 'image/jpeg' },
             { src: track.thumb, sizes: '192x192', type: 'image/jpeg' },
@@ -388,7 +383,7 @@ function updateMediaSession(track) {
 
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
-    navigator.mediaSession.setActionHandler('nexttrack', () => { window.playNextLogic(); });
+    navigator.mediaSession.setActionHandler('nexttrack', () => { document.getElementById('fp-next')?.click(); });
     navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
 
     try {
@@ -452,7 +447,7 @@ window.playTrackByIndex = (index) => {
         window.OCTAVE.sessionHistory.push(track.videoId);
     }
     
-    window.OCTAVE.recentPlayed =[track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
+    window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
     window.saveCache();
 
     updatePlayerUI(track);
@@ -461,13 +456,16 @@ window.playTrackByIndex = (index) => {
     if (window.AUDIO_ENGINE === 'iframe') {
         if (ytReady && YTP) YTP.loadVideoById({ videoId: track.videoId });
     } else {
-        tryNextStream(track.videoId);
+        AUDIO.pause();
+        streamQueue = buildStreamQueue(track.videoId);
+        streamQueueIdx = 0;
+        tryNextStream();
     }
 };
 
 window.playTrack = (track) => {
     window.OCTAVE.isNextTrackManual = true; 
-    window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
+    window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
     if (existIdx >= 0) {
         window.playTrackByIndex(existIdx);
@@ -634,7 +632,7 @@ function updatePlayerUI(track) {
         const activeNav = document.querySelector('.nav-item.active')?.getAttribute('data-tab');
         if (activeNav === 'home' || activeNav === 'library') window.renderHome();
     }
-};
+}
 
 window.toggleLike = (track) => {
     if (window.OCTAVE.liked[track.videoId]) {
@@ -647,6 +645,7 @@ window.toggleLike = (track) => {
     if (window.renderHome) window.renderHome();
 };
 
+// MODIFIED: Seek function now handles continuous dragging coordinates and boolean locks
 function seekToPosition(e, containerElement, isFinalSeek = true) {
     if (window.OCTAVE.currentIndex === -1 || !containerElement) return;
     const rect = containerElement.getBoundingClientRect();
@@ -670,6 +669,7 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     }
 
     if (totalTime > 0 && !isNaN(totalTime)) {
+        // Instantly update the visual UI
         const fpFill = document.getElementById('fp-progress-fill');
         const miniFill = document.getElementById('mini-progress');
         const currTime = document.getElementById('fp-time-current');
@@ -678,6 +678,7 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
         if (containerElement.classList.contains('mini-player') && miniFill) miniFill.style.width = `${percentage * 100}%`;
         if (currTime) currTime.textContent = formatTime(totalTime * percentage);
 
+        // Only lock the position into the audio stream on the final release
         if (isFinalSeek) {
             if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
                 YTP.seekTo(totalTime * percentage, true);
@@ -712,7 +713,7 @@ window.performSearch = async (query) => {
             continue;
         }
     }
-    return[];
+    return [];
 };
 
 window.setSleepTimer = (minutes) => {
@@ -791,7 +792,7 @@ window.fetchFullArtistProfile = async (artist) => {
         name: cleanArtist,
         bio: "Artist biography not available.",
         banner: "",
-        tracks:[]
+        tracks: []
     };
 
     try {
@@ -877,6 +878,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         updatePlayerUI(track);
         updateMediaSession(track); 
+        
+        if (window.AUDIO_ENGINE === 'native') {
+            streamQueue = buildStreamQueue(track.videoId);
+            streamQueueIdx = 0;
+            if (streamQueue.length > 0) {
+                AUDIO.src = streamQueue[0];
+                AUDIO.load();
+            }
+        }
     }
 
     document.querySelector('.mini-player')?.addEventListener('click', (e) => {
@@ -927,6 +937,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
     });
     
+    // MODIFIED: Unified Scrubber logic for the Full Player
     const fpProgContainer = document.getElementById('fp-progress-container');
     if (fpProgContainer) {
         const handleScrubStart = (e) => {
@@ -935,7 +946,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         const handleScrubMove = (e) => {
             if (!window.OCTAVE.isDraggingProgress) return;
-            if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); 
+            if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); // Prevents page scrolling while scrubbing
             seekToPosition(e, fpProgContainer, false);
         };
         const handleScrubEnd = (e) => {
