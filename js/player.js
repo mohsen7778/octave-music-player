@@ -1,6 +1,6 @@
 // ============================================================
 // player.js — Octave Hybrid Audio Engine
-// Forced IFrame Engine with Dynamic Background Swapping & Preloading
+// Fixed Autoplay Progression & Lockscreen Resume
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -29,13 +29,12 @@ window.OCTAVE = {
     isNextTrackManual: true, 
     activeTrackViewed: false,
     isDraggingProgress: false,
-    isTransitioning: false, // Prevents spam-clicking and lag
-    nextTrackPreloaded: false // Tracks if 50s preload has run
+    nextTrackPreloaded: false 
 };
 
 // ─── HYBRID ENGINE ROUTER ──────────────────────────────────────────────────
-window.AUDIO_ENGINE = 'iframe'; // Force IFrame engine for ALL browsers including Chrome
-let activeEngine = window.AUDIO_ENGINE; // Tracks the currently running engine dynamically
+window.AUDIO_ENGINE = 'iframe'; 
+let activeEngine = window.AUDIO_ENGINE; 
 
 if (navigator.brave && navigator.brave.isBrave) {
     navigator.brave.isBrave().then(isBrave => {
@@ -205,13 +204,11 @@ const tryNextStream = (videoId) => {
     AUDIO.play().catch(() => {
         updatePlayIcons('fa-solid fa-play');
         window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
     });
 };
 
 AUDIO.addEventListener('playing', () => {
     if (activeEngine !== 'native') return;
-    window.OCTAVE.isTransitioning = false; // Unlock buttons
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     startProgressTracking();
@@ -242,12 +239,12 @@ AUDIO.addEventListener('error', () => {
         AUDIO.src = getStreamUrl(track.videoId);
         AUDIO.currentTime = currentPos;
         AUDIO.load();
-        AUDIO.play().catch(() => { window.OCTAVE.isTransitioning = false; });
+        AUDIO.play().catch(() => {});
     }
 });
 
 
-// ─── IFRAME ENGINE SETUP (BRAVE / NOW ALSO CHROME) ─────────────────────────────
+// ─── IFRAME ENGINE SETUP ─────────────────────────────
 let YTP = null;
 let ytReady = false;
 
@@ -282,7 +279,6 @@ window.onYouTubeIframeAPIReady = () => {
 function onYTS(e) {
     if (activeEngine !== 'iframe') return;
     if (e.data === YT.PlayerState.PLAYING) {
-        window.OCTAVE.isTransitioning = false; // Unlock buttons
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
         startProgressTracking();
@@ -316,8 +312,6 @@ function handleTrackEnded() {
 }
 
 window.playNextLogic = () => {
-    if (window.OCTAVE.isTransitioning) return; // Spam prevention
-    
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else if (window.generateDiscoverMix) {
@@ -339,6 +333,24 @@ function updatePlayIcons(iconClass) {
 window.togglePlay = () => {
     if (window.OCTAVE.currentIndex === -1) return;
     
+    // Lockscreen/Background Resume Fix: 
+    // If the screen is off (document.hidden) and the IFrame is trying to play, YouTube blocks it.
+    // We intercept the command and instantly switch to the Native background engine to force playback.
+    if (window.AUDIO_ENGINE === 'iframe') {
+        if (document.hidden && activeEngine === 'iframe' && !window.OCTAVE.isPlaying) {
+            activeEngine = 'native';
+            let currentTime = 0;
+            if (YTP && typeof YTP.getCurrentTime === 'function') {
+                currentTime = YTP.getCurrentTime();
+            }
+            const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+            AUDIO.src = getStreamUrl(track.videoId);
+            AUDIO.currentTime = currentTime;
+            AUDIO.play().catch(()=>{});
+            return;
+        }
+    }
+
     if (activeEngine === 'iframe') {
         if (!YTP) return;
         window.OCTAVE.isPlaying ? YTP.pauseVideo() : YTP.playVideo();
@@ -374,7 +386,6 @@ function startProgressTracking() {
             if (currTime) currTime.textContent = formatTime(current);
             if (totTime) totTime.textContent = formatTime(total);
 
-            // Trigger the 50-second preloading logic
             if (current >= 50 && !window.OCTAVE.nextTrackPreloaded) {
                 preloadNextTrackInQueue();
                 window.OCTAVE.nextTrackPreloaded = true;
@@ -448,18 +459,11 @@ function syncMediaSessionPosition() {
 }
 
 window.playTrackByIndex = (index) => {
-    // Spam click prevention block
-    if (window.OCTAVE.isTransitioning) return; 
-    
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     const track = window.OCTAVE.queue[index];
 
-    // Lock buttons and reset preloader
-    window.OCTAVE.isTransitioning = true;
     window.OCTAVE.nextTrackPreloaded = false;
-    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 4000); // Failsafe unlock
-
-    updatePlayIcons('fa-solid fa-spinner fa-spin'); // Show visual loading feedback
+    updatePlayIcons('fa-solid fa-spinner fa-spin'); 
     
     const hour = new Date().getHours();
     let tod = 'night';
@@ -488,9 +492,6 @@ window.playTrackByIndex = (index) => {
     updatePlayerUI(track);
     updateMediaSession(track);
 
-    // DYNAMIC BACKGROUND SWAPPER:
-    // If the browser tab is hidden/locked, Iframe will refuse to load the next video.
-    // We instantly swap to the Native Engine to guarantee uninterrupted playback!
     if (window.AUDIO_ENGINE === 'iframe') {
         if (document.hidden) {
             activeEngine = 'native';
@@ -505,6 +506,7 @@ window.playTrackByIndex = (index) => {
         AUDIO.pause();
         if (ytReady && YTP) {
             YTP.loadVideoById({ videoId: track.videoId });
+            YTP.playVideo(); // Enforce playback
         }
     } else {
         if (YTP && typeof YTP.pauseVideo === 'function') YTP.pauseVideo();
@@ -513,7 +515,6 @@ window.playTrackByIndex = (index) => {
 };
 
 window.playTrack = (track) => {
-    if (window.OCTAVE.isTransitioning) return; // Spam prevention
     window.OCTAVE.isNextTrackManual = true; 
     window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
@@ -526,8 +527,6 @@ window.playTrack = (track) => {
 };
 
 window.playPrev = () => {
-    if (window.OCTAVE.isTransitioning) return; // Spam prevention
-    
     let current = 0;
     if (activeEngine === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
         current = YTP.getCurrentTime();
@@ -958,8 +957,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
     
     document.getElementById('fp-next')?.addEventListener('click', () => {
-        if (window.OCTAVE.isTransitioning) return; // Spam prevention
-        
         if (window.OCTAVE.currentIndex >= 0) {
             const timeListened = Date.now() - window.OCTAVE.trackStartTime;
             if (timeListened < 15000) { 
