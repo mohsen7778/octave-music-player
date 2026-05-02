@@ -1,6 +1,6 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
-// Stable Chrome Native Fix + Untouched Brave IFrame Engine
+// Engine Router Fixed for Chrome
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -29,24 +29,19 @@ window.OCTAVE = {
     isNextTrackManual: true, 
     activeTrackViewed: false,
     isDraggingProgress: false,
-    isTransitioning: false,
-    nextTrackPreloaded: false
+    isTransitioning: false, 
+    nextTrackPreloaded: false 
 };
 
-//  HYBRID ENGINE ROUTER 
 window.AUDIO_ENGINE = 'native'; 
-let activeEngine = 'native';
+let activeEngine = 'native'; 
 
-if (navigator.brave && navigator.brave.isBrave) {
-    navigator.brave.isBrave().then(isBrave => {
-        if (isBrave) {
-            window.AUDIO_ENGINE = 'iframe';
-            activeEngine = 'iframe';
-            console.log("Octave Brave detected. Using Instant IFrame Engine.");
-        }
-    });
+if (navigator.brave) {
+    window.AUDIO_ENGINE = 'iframe';
+    activeEngine = 'iframe';
+    console.log("Octave Brave detected Using Instant IFrame Engine");
 } else {
-    console.log("Octave Chrome Safari detected. Using Stable Native Engine.");
+    console.log("Octave Chrome Safari detected Using Native Engine");
 }
 
 window.initTrackStats = (videoId) => {
@@ -118,23 +113,15 @@ window.importVault = (event) => {
             const json = JSON.parse(e.target.result);
             if (json.playlists || json.liked) {
                 localStorage.setItem('octave_data', e.target.result);
-                alert('Data Vault Restored Reloading app.');
+                alert('Data Vault Restored Reloading app');
                 location.reload();
             }
         } catch (err) {
-            alert('Invalid Vault Backup File.');
+            alert('Invalid Vault Backup File');
         }
     };
     reader.readAsText(file);
 };
-
-//  API INSTANCES 
-window.PIPED = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.smnz.de',
-    'https://api.piped.projectsegfau.lt',
-    'https://piped-api.lunar.icu'
-];
 
 window.INVIDIOUS =[
     'https://inv.nadeko.net',
@@ -156,19 +143,21 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
     .catch(() => console.warn('Using fallback instances'));
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
-window.pipedIdx = Math.floor(Math.random() * window.PIPED.length);
 
-//  STABLE NATIVE ENGINE FOR CHROME 
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
-AUDIO.setAttribute("playsinline", "true");
-AUDIO.setAttribute("webkit-playsinline", "true");
-AUDIO.crossOrigin = "anonymous";
+
+const PRELOAD_AUDIO = new Audio(); 
+PRELOAD_AUDIO.preload = 'auto';
+let preloadedVideoId = null;
 
 let audioUnlocked = false;
-function unlockAudioForSafari() {
+function unlockAudioEngine() {
     if (audioUnlocked) return;
     audioUnlocked = true;
+    
+    AUDIO.play().then(() => { AUDIO.pause(); }).catch(() => {});
+    
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const buf = ctx.createBuffer(1, 1, 22050);
@@ -179,87 +168,45 @@ function unlockAudioForSafari() {
         ctx.resume().catch(() => {});
     } catch (e) {}
 }
-document.addEventListener('click', unlockAudioForSafari, { once: true });
-document.addEventListener('touchstart', unlockAudioForSafari, { once: true });
+document.addEventListener('click', unlockAudioEngine, { once: true });
+document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
-// FAST RACER Prevents infinite buffering by capping fetch time to exactly 3 seconds
-async function getDirectAudioUrl(videoId) {
-    return new Promise((resolve) => {
-        let isResolved = false;
-        const controllers = [];
-        
-        const fallbackTimer = setTimeout(() => {
-            if (!isResolved) {
-                isResolved = true;
-                controllers.forEach(c => c.abort());
-                const fallbackInv = window.INVIDIOUS[window.invIdx];
-                resolve(`${fallbackInv}/latest_version?id=${videoId}&itag=140`);
-            }
-        }, 3000);
-
-        const racers = [...window.PIPED].sort(() => 0.5 - Math.random()).slice(0, 3);
-        
-        racers.forEach(base => {
-            const controller = new AbortController();
-            controllers.push(controller);
-            fetch(`${base}/streams/${videoId}`, { signal: controller.signal })
-                .then(res => res.json())
-                .then(data => {
-                    if (!isResolved && data && data.audioStreams) {
-                        const stream = data.audioStreams.find(s => String(s.itag) === '140') || data.audioStreams[0];
-                        if (stream && stream.url) {
-                            isResolved = true;
-                            clearTimeout(fallbackTimer);
-                            controllers.forEach(c => c.abort());
-                            resolve(stream.url);
-                        }
-                    }
-                })
-                .catch(() => {});
-        });
-    });
+function getStreamUrl(videoId) {
+    const base = window.INVIDIOUS[window.invIdx];
+    return `${base}/latest_version?id=${videoId}&itag=140`;
 }
 
-const tryNextStream = async (videoId) => {
+function preloadNextTrackInQueue() {
+    if (window.OCTAVE.currentIndex < 0) return;
+    const nextIdx = window.OCTAVE.currentIndex + 1;
+    if (nextIdx < window.OCTAVE.queue.length) {
+        const nextId = window.OCTAVE.queue[nextIdx].videoId;
+        PRELOAD_AUDIO.src = getStreamUrl(nextId);
+        preloadedVideoId = nextId;
+        PRELOAD_AUDIO.load(); 
+    }
+}
+
+const tryNextStream = (videoId) => {
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
     
-    const url = await getDirectAudioUrl(videoId);
-    
-    if (url) {
-        AUDIO.src = url;
-        AUDIO.load();
-        AUDIO.play().catch(() => {
-            updatePlayIcons('fa-solid fa-play');
-            window.OCTAVE.isPlaying = false;
-        });
+    if (preloadedVideoId === videoId && PRELOAD_AUDIO.src) {
+        AUDIO.src = PRELOAD_AUDIO.src;
     } else {
+        AUDIO.src = getStreamUrl(videoId);
+    }
+    
+    AUDIO.load();
+    AUDIO.play().catch(() => {
         updatePlayIcons('fa-solid fa-play');
         window.OCTAVE.isPlaying = false;
-    }
+        window.OCTAVE.isTransitioning = false;
+    });
 };
-
-AUDIO.addEventListener('error', () => {
-    if (activeEngine !== 'native') return;
-    
-    console.error("Audio stream failed. Retrying on new server...");
-    window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
-    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED.length;
-    
-    if (window.OCTAVE.currentIndex >= 0) {
-        updatePlayIcons('fa-solid fa-spinner fa-spin');
-        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        const fallbackUrl = `${window.INVIDIOUS[window.invIdx]}/latest_version?id=${track.videoId}&itag=140`;
-        
-        setTimeout(() => {
-            AUDIO.src = fallbackUrl;
-            AUDIO.load();
-            AUDIO.play().catch(() => {});
-        }, 1500); 
-    }
-});
 
 AUDIO.addEventListener('playing', () => {
     if (activeEngine !== 'native') return;
+    window.OCTAVE.isTransitioning = false; 
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     startProgressTracking();
@@ -281,8 +228,20 @@ AUDIO.addEventListener('ended', () => {
     handleTrackEnded();
 });
 
+AUDIO.addEventListener('error', () => {
+    if (activeEngine !== 'native') return;
+    window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
+    if (window.OCTAVE.currentIndex >= 0) {
+        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        const currentPos = AUDIO.currentTime || 0;
+        AUDIO.src = getStreamUrl(track.videoId);
+        AUDIO.currentTime = currentPos;
+        AUDIO.load();
+        AUDIO.play().catch(() => { window.OCTAVE.isTransitioning = false; });
+    }
+});
 
-//  IFRAME ENGINE BRAVE UNTOUCHED 
+
 let YTP = null;
 let ytReady = false;
 
@@ -317,6 +276,7 @@ window.onYouTubeIframeAPIReady = () => {
 function onYTS(e) {
     if (activeEngine !== 'iframe') return;
     if (e.data === YT.PlayerState.PLAYING) {
+        window.OCTAVE.isTransitioning = false; 
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
         startProgressTracking();
@@ -333,21 +293,8 @@ function onYTS(e) {
     }
 }
 
-//  HYBRID LOGIC & SHARED CONTROLS 
 let progressTimer = null;
 let sleepTimerId = null;
-
-window.playNextLogic = () => {
-    if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-        window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-    } else if (window.generateDiscoverMix) {
-        window.generateDiscoverMix(); 
-    } else {
-        window.OCTAVE.isPlaying = false;
-        updatePlayIcons('fa-solid fa-play');
-        clearInterval(progressTimer);
-    }
-};
 
 function handleTrackEnded() {
     window.OCTAVE.isPlaying = false;
@@ -360,6 +307,20 @@ function handleTrackEnded() {
     }
     if (window.playNextLogic) window.playNextLogic();
 }
+
+window.playNextLogic = () => {
+    if (window.OCTAVE.isTransitioning) return; 
+    
+    if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
+        window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
+    } else if (window.generateDiscoverMix) {
+        window.generateDiscoverMix(); 
+    } else {
+        window.OCTAVE.isPlaying = false;
+        updatePlayIcons('fa-solid fa-play');
+        clearInterval(progressTimer);
+    }
+};
 
 function updatePlayIcons(iconClass) {
     const mini = document.querySelector('.play-btn-mini i');
@@ -405,6 +366,11 @@ function startProgressTracking() {
             if (fpProg) fpProg.style.width = `${percent}%`;
             if (currTime) currTime.textContent = formatTime(current);
             if (totTime) totTime.textContent = formatTime(total);
+
+            if (current >= 50 && !window.OCTAVE.nextTrackPreloaded) {
+                preloadNextTrackInQueue();
+                window.OCTAVE.nextTrackPreloaded = true;
+            }
         }
     }, 500);
 }
@@ -474,8 +440,16 @@ function syncMediaSessionPosition() {
 }
 
 window.playTrackByIndex = (index) => {
+    if (window.OCTAVE.isTransitioning) return; 
+    
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     const track = window.OCTAVE.queue[index];
+
+    window.OCTAVE.isTransitioning = true;
+    window.OCTAVE.nextTrackPreloaded = false;
+    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 4000); 
+
+    updatePlayIcons('fa-solid fa-spinner fa-spin'); 
     
     const hour = new Date().getHours();
     let tod = 'night';
@@ -505,7 +479,11 @@ window.playTrackByIndex = (index) => {
     updateMediaSession(track);
 
     if (window.AUDIO_ENGINE === 'iframe') {
-        activeEngine = 'iframe';
+        if (document.hidden) {
+            activeEngine = 'native';
+        } else {
+            activeEngine = 'iframe';
+        }
     } else {
         activeEngine = 'native';
     }
@@ -514,16 +492,15 @@ window.playTrackByIndex = (index) => {
         AUDIO.pause();
         if (ytReady && YTP) {
             YTP.loadVideoById({ videoId: track.videoId });
-            YTP.playVideo();
         }
     } else {
         if (YTP && typeof YTP.pauseVideo === 'function') YTP.pauseVideo();
-        AUDIO.pause();
         tryNextStream(track.videoId); 
     }
 };
 
 window.playTrack = (track) => {
+    if (window.OCTAVE.isTransitioning) return; 
     window.OCTAVE.isNextTrackManual = true; 
     window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
@@ -536,6 +513,8 @@ window.playTrack = (track) => {
 };
 
 window.playPrev = () => {
+    if (window.OCTAVE.isTransitioning) return; 
+    
     let current = 0;
     if (activeEngine === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
         current = YTP.getCurrentTime();
@@ -776,11 +755,11 @@ window.performSearch = async (query) => {
 window.setSleepTimer = (minutes) => {
     if (sleepTimerId) clearTimeout(sleepTimerId);
     if (minutes === 0) {
-        alert('Sleep timer cancelled.');
+        alert('Sleep timer cancelled');
         document.getElementById('timer-modal')?.classList.remove('active');
         return;
     }
-    alert(`Sleep timer set. Audio will pause in ${minutes} minutes.`);
+    alert(`Sleep timer set Audio will pause in ${minutes} minutes`);
     document.getElementById('timer-modal')?.classList.remove('active');
     sleepTimerId = setTimeout(() => {
         if (window.OCTAVE.isPlaying) window.togglePlay();
@@ -961,6 +940,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
     
     document.getElementById('fp-next')?.addEventListener('click', () => {
+        if (window.OCTAVE.isTransitioning) return; 
+        
         if (window.OCTAVE.currentIndex >= 0) {
             const timeListened = Date.now() - window.OCTAVE.trackStartTime;
             if (timeListened < 15000) { 
