@@ -1,6 +1,6 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
-// Stable Baseline with Synchronous Next Track Preload
+// Stable Engine Router for Chrome Native Playback
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -29,19 +29,20 @@ window.OCTAVE = {
     isNextTrackManual: true, 
     activeTrackViewed: false,
     isDraggingProgress: false,
-    nextTrackUrl: null,
-    nextTrackId: null
+    isTransitioning: false
 };
 
-//  HYBRID ENGINE ROUTER 
 window.AUDIO_ENGINE = 'native'; 
 
 if (navigator.brave && navigator.brave.isBrave) {
     navigator.brave.isBrave().then(isBrave => {
         if (isBrave) {
             window.AUDIO_ENGINE = 'iframe';
+            console.log("Octave Brave detected. Using Instant IFrame Engine.");
         }
     });
+} else {
+    console.log("Octave Chrome Safari detected. Using Native Engine.");
 }
 
 window.initTrackStats = (videoId) => {
@@ -93,7 +94,36 @@ function loadCache() {
 }
 loadCache();
 
-//  API INSTANCES 
+window.exportVault = () => {
+    const data = localStorage.getItem('octave_data') || "{}";
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "Octave_Data_Vault.json";
+    a.click();
+    URL.revokeObjectURL(url);
+};
+
+window.importVault = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const json = JSON.parse(e.target.result);
+            if (json.playlists || json.liked) {
+                localStorage.setItem('octave_data', e.target.result);
+                alert('Data Vault Restored Reloading app.');
+                location.reload();
+            }
+        } catch (err) {
+            alert('Invalid Vault Backup File.');
+        }
+    };
+    reader.readAsText(file);
+};
+
 window.PIPED = [
     'https://pipedapi.kavin.rocks',
     'https://pipedapi.smnz.de',
@@ -110,15 +140,41 @@ window.INVIDIOUS =[
     'https://invidious.lunar.icu'
 ];
 
+fetch('https://api.invidious.io/instances.json?sort_by=health')
+    .then(res => res.json())
+    .then(data => {
+        const healthy = data
+            .filter(inst => inst[1].type === 'https' && inst[1].api === true)
+            .map(inst => inst[1].uri);
+        if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
+    })
+    .catch(() => console.warn('Using fallback instances'));
+
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 window.pipedIdx = Math.floor(Math.random() * window.PIPED.length);
 
-//  STABLE NATIVE ENGINE 
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
 AUDIO.setAttribute("playsinline", "true");
 AUDIO.setAttribute("webkit-playsinline", "true");
 AUDIO.crossOrigin = "anonymous";
+
+let audioUnlocked = false;
+function unlockAudioForSafari() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const buf = ctx.createBuffer(1, 1, 22050);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+        ctx.resume().catch(() => {});
+    } catch (e) {}
+}
+document.addEventListener('click', unlockAudioForSafari, { once: true });
+document.addEventListener('touchstart', unlockAudioForSafari, { once: true });
 
 async function getDirectAudioUrl(videoId) {
     for (let i = 0; i < window.PIPED.length; i++) {
@@ -137,19 +193,6 @@ async function getDirectAudioUrl(videoId) {
     }
     const fallbackInv = window.INVIDIOUS[window.invIdx];
     return `${fallbackInv}/latest_version?id=${videoId}&itag=140`;
-}
-
-function preloadNextUrl() {
-    if (window.AUDIO_ENGINE !== 'native') return;
-    if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-        const nextTrack = window.OCTAVE.queue[window.OCTAVE.currentIndex + 1];
-        getDirectAudioUrl(nextTrack.videoId).then(url => {
-            if (url) {
-                window.OCTAVE.nextTrackUrl = url;
-                window.OCTAVE.nextTrackId = nextTrack.videoId;
-            }
-        });
-    }
 }
 
 const tryNextStream = async (videoId) => {
@@ -183,7 +226,6 @@ AUDIO.addEventListener('playing', () => {
     updatePlayIcons('fa-solid fa-pause');
     startProgressTracking();
     syncMediaSessionPosition();
-    preloadNextUrl(); 
 });
 
 AUDIO.addEventListener('pause', () => {
@@ -198,7 +240,6 @@ AUDIO.addEventListener('ended', () => {
     handleTrackEnded();
 });
 
-//  IFRAME ENGINE (BRAVE) 
 let YTP = null;
 let ytReady = false;
 
@@ -219,6 +260,7 @@ window.onYouTubeIframeAPIReady = () => {
         events: {
             onReady: e => {
                 ytReady = true;
+                e.target.setVolume(100);
                 if (window.AUDIO_ENGINE === 'iframe' && window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
                     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
                     YTP.cueVideoById({ videoId: track.videoId });
@@ -245,12 +287,14 @@ function onYTS(e) {
     }
 }
 
-//  SHARED CONTROLS 
 let progressTimer = null;
+let sleepTimerId = null;
 
 window.playNextLogic = () => {
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
+    } else if (window.generateDiscoverMix) {
+        window.generateDiscoverMix(); 
     } else {
         window.OCTAVE.isPlaying = false;
         updatePlayIcons('fa-solid fa-play');
@@ -261,6 +305,12 @@ window.playNextLogic = () => {
 function handleTrackEnded() {
     window.OCTAVE.isPlaying = false;
     clearInterval(progressTimer);
+    if (window.OCTAVE.currentIndex >= 0) {
+        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        window.initTrackStats(track.videoId);
+        window.OCTAVE.playStats[track.videoId].completes++;
+        window.saveCache();
+    }
     if (window.playNextLogic) window.playNextLogic();
 }
 
@@ -319,6 +369,39 @@ function formatTime(seconds) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+function updateMediaSession(track) {
+    if (!('mediaSession' in navigator)) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title,
+        artist: track.author,
+        artwork:[
+            { src: track.thumb, sizes: '96x96', type: 'image/jpeg' },
+            { src: track.thumb, sizes: '128x128', type: 'image/jpeg' },
+            { src: track.thumb, sizes: '192x192', type: 'image/jpeg' },
+            { src: track.thumb, sizes: '256x256', type: 'image/jpeg' },
+            { src: track.thumb, sizes: '384x384', type: 'image/jpeg' },
+            { src: track.thumb, sizes: '512x512', type: 'image/jpeg' }
+        ]
+    });
+
+    navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
+    navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
+    navigator.mediaSession.setActionHandler('nexttrack', () => { window.playNextLogic(); });
+    navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
+
+    try {
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+            if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.seekTo === 'function') {
+                YTP.seekTo(details.seekTime, true);
+            } else if (window.AUDIO_ENGINE === 'native' && AUDIO.duration) {
+                AUDIO.currentTime = details.seekTime;
+            }
+            syncMediaSessionPosition();
+        });
+    } catch (e) {}
+}
+
 function syncMediaSessionPosition() {
     if (!('mediaSession' in navigator)) return;
     let duration = 0;
@@ -343,32 +426,32 @@ function syncMediaSessionPosition() {
     }
 }
 
-function updateMediaSession(track) {
-    if (!('mediaSession' in navigator)) return;
-
-    navigator.mediaSession.metadata = new MediaMetadata({
-        title: track.title,
-        artist: track.author,
-        artwork:[
-            { src: track.thumb, sizes: '96x96', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '128x128', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '192x192', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '256x256', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '384x384', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '512x512', type: 'image/jpeg' }
-        ]
-    });
-    navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
-    navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
-    navigator.mediaSession.setActionHandler('nexttrack', () => { window.playNextLogic(); });
-    navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
-}
-
 window.playTrackByIndex = (index) => {
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     const track = window.OCTAVE.queue[index];
     
+    const hour = new Date().getHours();
+    let tod = 'night';
+    if (hour >= 5 && hour < 12) tod = 'morning';
+    else if (hour >= 12 && hour < 17) tod = 'afternoon';
+
+    window.initTrackStats(track.videoId);
+    window.OCTAVE.playStats[track.videoId].plays++;
+    window.OCTAVE.playStats[track.videoId].lastPlayedTimeOfDay = tod;
+    
+    if (window.OCTAVE.isNextTrackManual) {
+        window.OCTAVE.playStats[track.videoId].manual++;
+    }
+
+    window.OCTAVE.trackStartTime = Date.now();
+    window.OCTAVE.activeTrackViewed = false;
     window.OCTAVE.currentIndex = index;
+
+    if (!window.OCTAVE.sessionHistory.includes(track.videoId)) {
+        window.OCTAVE.sessionHistory.push(track.videoId);
+    }
+    
+    window.OCTAVE.recentPlayed =[track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
     window.saveCache();
 
     updatePlayerUI(track);
@@ -381,25 +464,13 @@ window.playTrackByIndex = (index) => {
         }
     } else {
         AUDIO.pause();
-        
-        if (window.OCTAVE.nextTrackId === track.videoId && window.OCTAVE.nextTrackUrl) {
-            updatePlayIcons('fa-solid fa-spinner fa-spin');
-            AUDIO.src = window.OCTAVE.nextTrackUrl;
-            AUDIO.load();
-            AUDIO.play().catch(() => {
-                updatePlayIcons('fa-solid fa-play');
-                window.OCTAVE.isPlaying = false;
-            });
-            
-            window.OCTAVE.nextTrackUrl = null;
-            window.OCTAVE.nextTrackId = null;
-        } else {
-            tryNextStream(track.videoId);
-        }
+        tryNextStream(track.videoId); 
     }
 };
 
 window.playTrack = (track) => {
+    window.OCTAVE.isNextTrackManual = true; 
+    window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
     if (existIdx >= 0) {
         window.playTrackByIndex(existIdx);
@@ -410,8 +481,28 @@ window.playTrack = (track) => {
 };
 
 window.playPrev = () => {
-    if (window.OCTAVE.currentIndex > 0) {
+    let current = 0;
+    if (window.AUDIO_ENGINE === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
+        current = YTP.getCurrentTime();
+    } else if (window.AUDIO_ENGINE === 'native') {
+        current = AUDIO.currentTime;
+    }
+
+    if (current > 3) {
+        if (window.AUDIO_ENGINE === 'iframe' && YTP) YTP.seekTo(0);
+        else if (window.AUDIO_ENGINE === 'native') AUDIO.currentTime = 0;
+    } else if (window.OCTAVE.currentIndex > 0) {
+        window.OCTAVE.isNextTrackManual = true;
         window.playTrackByIndex(window.OCTAVE.currentIndex - 1);
+    }
+};
+
+window.playPlaylist = (plName) => {
+    const pl = window.OCTAVE.playlists[plName];
+    if (pl && pl.length > 0) {
+        window.OCTAVE.isNextTrackManual = true;
+        window.OCTAVE.queue = [...pl];
+        window.playTrackByIndex(0);
     }
 };
 
@@ -625,6 +716,63 @@ window.performSearch = async (query) => {
         }
     }
     return[];
+};
+
+window.setSleepTimer = (minutes) => {
+    if (sleepTimerId) clearTimeout(sleepTimerId);
+    if (minutes === 0) {
+        alert('Sleep timer cancelled.');
+        document.getElementById('timer-modal')?.classList.remove('active');
+        return;
+    }
+    alert(`Sleep timer set. Audio will pause in ${minutes} minutes.`);
+    document.getElementById('timer-modal')?.classList.remove('active');
+    sleepTimerId = setTimeout(() => {
+        if (window.OCTAVE.isPlaying) window.togglePlay();
+    }, minutes * 60000);
+};
+
+window.fetchLyrics = async (artist, title) => {
+    const cleanTitle = title
+        .replace(/[\(\[【].*?[\)\]】]/g, '')
+        .replace(/(feat\.|ft\.|remix|official|video|music video|lyric|audio|live).*/gi, '')
+        .replace(/["']/g, '')
+        .trim();
+
+    const cleanArtist = artist
+        .replace(/ - Topic/gi, '')
+        .replace(/VEVO/gi, '')
+        .split(/,|&| ft\.| feat\.| x | with /i)[0]
+        .trim();
+
+    try {
+        const query = `${cleanArtist} ${cleanTitle}`;
+        const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
+        if (r1.ok) {
+            const data = await r1.json();
+            if (data && data.length > 0) {
+                const bestMatch = data.find(item =>
+                    item.trackName.toLowerCase().includes(cleanTitle.toLowerCase())
+                ) || data[0];
+
+                const rawLyrics = bestMatch.syncedLyrics || bestMatch.plainLyrics || "";
+                if (rawLyrics) {
+                    const cleanLines = rawLyrics
+                        .replace(/\[\d+:\d+\.\d+\]/g, '')
+                        .split('\n')
+                        .filter(l => l.trim() !== "");
+
+                    let html = `<div style="padding: 20px 0 160px 0; font-family: '${window.OCTAVE.selectedFont}', sans-serif; display: flex; flex-direction: column; gap: 16px;">`;
+                    cleanLines.forEach(line => {
+                        html += `<div class="lyric-line">${window.escapeHTML(line)}</div>`;
+                    });
+                    html += '</div>';
+                    return html;
+                }
+            }
+        }
+    } catch (e) {}
+    return `<div style="text-align:center; padding: 40px; color: var(--text-secondary);">Lyrics not found for this track.</div>`;
 };
 
 window.fetchFullArtistProfile = async (artist) => {
