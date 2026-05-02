@@ -37,13 +37,13 @@ By operating strictly at the edge and acting as a bridge to public APIs, Octave 
 * **No Database:** 100% of user data is isolated to your device.
 * **Self-Sovereign Data:** Complete export/import control over your listening history.
 
-## The Dual-Engine Architecture & Background Playback
+## Strict Requirement for Background Playback: Brave Browser
 
-Mobile operating systems natively restrict background media playback for browser-based applications to preserve battery life. To bypass these restrictions without utilizing costly proxy servers, Octave utilizes a proprietary dual-engine router.
+Mobile operating systems and browsers like Google Chrome or Safari natively restrict background media execution to preserve battery life. Because Octave is a pure client-side application without a dedicated backend server, Chrome **will aggressively pause** your music and kill the JavaScript stream-fetcher the moment your screen turns off.
 
-**Recommended Environment: Brave Browser** For the ultimate mobile experience featuring instant load times and uninterrupted background playback, the **Brave Browser** is strongly recommended. Octave automatically detects Brave and routes audio through a highly optimized, instant-loading IFrame engine. Brave natively respects media session threads, preventing the OS from freezing the JavaScript execution when the application is pushed to the background.
+To bypass this and achieve uninterrupted background playback with the screen locked, **you MUST use the Brave Browser**. 
 
-**Fallback Protocol (Chrome & Safari)** When accessed via standard browsers, Octave automatically falls back to a Native HTML5 `<audio>` proxy engine. This routes the audio through Invidious CDN edge nodes to force background audio survival across stricter operating systems, maintaining your background listening experience at the cost of a minor initial buffering phase.
+Brave's native architecture respects media session threads and prevents the OS from freezing background JavaScript execution. Octave automatically detects Brave and routes audio through a highly optimized, instant-loading IFrame engine designed specifically to survive background throttling. If you want background play, Brave is strictly required.
 
 ## Core Features
 
@@ -85,7 +85,7 @@ Octave is a purely static application. It requires zero build steps, node module
 Octave does not store or host any media. It acts entirely as a client-side interface connecting your browser to public APIs:
 
 * **Search & Audio Stream:** Proxied via public Invidious instances.
-* **Playback Control:** Dual-Engine (IFrame / Native Audio) + Media Session API.
+* **Playback Control:** Forced IFrame Engine + Media Session API.
 * **Lyrics:** LRCLIB API.
 * **Artist Info:** TheAudioDB / Wikipedia API.
 * **Storage Engine:** Browser `localStorage`.
