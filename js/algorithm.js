@@ -1,5 +1,6 @@
 // ============================================================
 // algorithm.js — Octave Top-Notch Auto-DJ & Prediction Engine
+// Restored iTunes Feed with Strict Cache Bypass
 // ============================================================
 
 window.calculateTrackScore = (track) => {
@@ -54,14 +55,14 @@ window.fetchAutoDjBatch = async () => {
                     const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
                     try {
                         const controller = new AbortController();
-                        const id = setTimeout(() => controller.abort(), 3500); // 3.5 sec fail-fast timeout
+                        const id = setTimeout(() => controller.abort(), 3500); 
                         const r = await fetch(`${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`, { signal: controller.signal });
                         clearTimeout(id);
                         if (r.ok) {
                             const d = await r.json();
                             if (d.recommendedVideos && d.recommendedVideos.length > 0) {
                                 candidatePool.push(...d.recommendedVideos);
-                                break; // Got recommendations for this seed, break inner loop!
+                                break; 
                             }
                         }
                     } catch (e) { continue; }
@@ -283,48 +284,56 @@ window.fetchTrendingMusic = async () => {
     if (!trendingGrid) return;
 
     const now = Date.now();
-    const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+    const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 
-    // Hard wipe the old iTunes cache if it's stuck in memory
     if (window.OCTAVE.trendingData && window.OCTAVE.trendingData.tracks && window.OCTAVE.trendingData.tracks.length > 0) {
-        if (now - window.OCTAVE.trendingData.timestamp < TWELVE_HOURS) {
-            const hasValidVideoIds = window.OCTAVE.trendingData.tracks.some(t => t.videoId !== null);
-            if (hasValidVideoIds) {
-                window.renderTrendingTracks(window.OCTAVE.trendingData.tracks, trendingGrid);
-                return;
-            }
+        if (now - window.OCTAVE.trendingData.timestamp < THREE_DAYS) {
+            window.renderTrendingTracks(window.OCTAVE.trendingData.tracks, trendingGrid);
+            return;
         }
     }
 
-    let fetchedTracks = [];
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        try {
-            const r = await fetch(`${base}/api/v1/popular?videoCategory=10`);
-            if (r.ok) {
-                const d = await r.json();
-                if (d && d.length > 0) {
-                    fetchedTracks = d.filter(v => v.lengthSeconds && v.lengthSeconds < 600).map(v => ({
-                        videoId: v.videoId,
-                        title: v.title,
-                        author: v.author,
-                        thumb: (v.videoThumbnails && v.videoThumbnails.length > 0) ? v.videoThumbnails[0].url : ''
-                    })).slice(0, 50);
-                    break;
+    try {
+        const r = await fetch(`https://itunes.apple.com/us/rss/topsongs/limit=50/json?_t=${Date.now()}`, { cache: 'no-store' });
+        if (r.ok) {
+            const d = await r.json();
+            if (d.feed && d.feed.entry) {
+                const uniqueTracks = new Map();
+
+                d.feed.entry.forEach(entry => {
+                    const title = entry['im:name'].label;
+                    const author = entry['im:artist'].label;
+                    const key = `${title}-${author}`.toLowerCase(); 
+                    
+                    if (!uniqueTracks.has(key)) {
+                        let thumbUrl = '';
+                        if (entry['im:image'] && entry['im:image'].length > 0) {
+                            thumbUrl = entry['im:image'][entry['im:image'].length - 1].label;
+                        }
+                        
+                        uniqueTracks.set(key, {
+                            videoId: null, 
+                            title: title,
+                            author: author,
+                            thumb: thumbUrl
+                        });
+                    }
+                });
+
+                const newTracks = Array.from(uniqueTracks.values());
+
+                if (newTracks.length > 0) {
+                    window.OCTAVE.trendingData = {
+                        timestamp: now,
+                        tracks: newTracks
+                    };
+                    window.saveCache();
+                    window.renderTrendingTracks(newTracks, trendingGrid);
                 }
             }
-        } catch(e) { continue; }
-    }
-
-    if (fetchedTracks.length > 0) {
-        window.OCTAVE.trendingData = {
-            timestamp: now,
-            tracks: fetchedTracks
-        };
-        window.saveCache();
-        window.renderTrendingTracks(fetchedTracks, trendingGrid);
-    } else {
-        trendingGrid.innerHTML = '<div class="empty-state-text">Failed to load live charts.</div>';
+        }
+    } catch(e) { 
+        trendingGrid.innerHTML = '<div class="empty-state-text">Failed to load charts.</div>';
     }
 };
 
@@ -336,9 +345,7 @@ window.renderTrendingTracks = (tracks, container) => {
         el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${track.thumb}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
         
         el.addEventListener('click', async () => {
-            if (track.videoId) {
-                window.playTrack(track);
-            } else {
+            if (!track.videoId) {
                 el.style.opacity = '0.5'; 
                 const query = `${track.author} ${track.title} audio`;
                 const results = await window.performSearch(query);
@@ -351,6 +358,8 @@ window.renderTrendingTracks = (tracks, container) => {
                 } else {
                     alert("Could not find an audio stream for this track.");
                 }
+            } else {
+                window.playTrack(track);
             }
         });
         
