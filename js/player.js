@@ -1,6 +1,6 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
-// Background Playback Active + Ghost Timeline Fix
+// Background Playback Active + Ghost Timeline Fix + Dynamic Liquid Shadows
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -607,25 +607,39 @@ window.applyLiquidShadow = (imageSrc) => {
         ctx.drawImage(img, 0, 0);
         
         try {
-            const cx = Math.floor(img.width / 2);
-            const cy = Math.floor(img.height / 2);
+            const w = img.width;
+            const h = img.height;
             const sampleSize = 5;
-            const startX = Math.max(0, cx - 2);
-            const startY = Math.max(0, cy - 2);
-            const imageData = ctx.getImageData(startX, startY, sampleSize, sampleSize).data;
             
+            // Sample from 4 distinct spread points
+            const points = [
+                { x: Math.floor(w / 2), y: Math.floor(h / 2) },           // Center
+                { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },        // Top Middle
+                { x: Math.floor(w * 0.85), y: Math.floor(h * 0.85) },     // Bottom Right
+                { x: Math.floor(w * 0.15), y: Math.floor(h * 0.85) }      // Bottom Left
+            ];
+
             let r = 0, g = 0, b = 0, count = 0;
-            for(let i=0; i < imageData.length; i+=4) {
-                if(imageData[i] > 10 || imageData[i+1] > 10 || imageData[i+2] > 10) {
-                    r += imageData[i];
-                    g += imageData[i+1];
-                    b += imageData[i+2];
-                    count++;
+
+            points.forEach(pt => {
+                const startX = Math.max(0, Math.min(pt.x - 2, w - sampleSize));
+                const startY = Math.max(0, Math.min(pt.y - 2, h - sampleSize));
+                
+                const imageData = ctx.getImageData(startX, startY, sampleSize, sampleSize).data;
+                
+                for(let i=0; i < imageData.length; i+=4) {
+                    if(imageData[i] > 15 || imageData[i+1] > 15 || imageData[i+2] > 15) {
+                        r += imageData[i];
+                        g += imageData[i+1];
+                        b += imageData[i+2];
+                        count++;
+                    }
                 }
-            }
+            });
             
             if(count === 0) {
-                r = imageData[0]; g = imageData[1]; b = imageData[2];
+                const fallback = ctx.getImageData(Math.floor(w/2), Math.floor(h/2), 1, 1).data;
+                r = fallback[0]; g = fallback[1]; b = fallback[2];
             } else {
                 r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
             }
