@@ -1,6 +1,6 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
-// Background Playback Active + Ghost Timeline Fix + Dynamic Liquid Shadows
+// Background Playback Active + Ghost Timeline + Juicy Liquid Colors
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -644,12 +644,26 @@ window.applyLiquidShadow = (imageSrc) => {
                 r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
             }
 
+            // --- JUICY BLEND ALGORITHM (Unfade by ~30%) ---
+            
+            // 1. Boost Saturation: Pushes colors away from gray so mixed colors don't look muddy
+            let gray = (r + g + b) / 3;
+            r = r + (r - gray) * 0.4; 
+            g = g + (g - gray) * 0.4;
+            b = b + (b - gray) * 0.4;
+            
+            // 2. Boost Brightness: Multiplies intensity to make it pop, capping at 255
+            r = Math.min(255, Math.max(0, Math.floor(r * 1.2)));
+            g = Math.min(255, Math.max(0, Math.floor(g * 1.2)));
+            b = Math.min(255, Math.max(0, Math.floor(b * 1.2)));
+
             const fpPlayer = document.getElementById('full-player');
             if (fpPlayer) {
+                // Increased opacity layers (e.g. 0.9, 0.8, 0.7) to unfade the gradient itself
                 fpPlayer.style.background = `
-                    radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.8) 0%, transparent 40%),
-                    radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.7) 0%, transparent 40%),
-                    radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.6) 0%, transparent 50%),
+                    radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.9) 0%, transparent 40%),
+                    radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.8) 0%, transparent 40%),
+                    radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.7) 0%, transparent 50%),
                     var(--bg-deep)
                 `;
                 fpPlayer.style.backgroundSize = "200% 200%";
@@ -663,8 +677,9 @@ window.applyLiquidShadow = (imageSrc) => {
 
             const mini = document.querySelector('.mini-player');
             if (mini) {
-                mini.style.background = `radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.3) 0%, transparent 70%), var(--glass-bg)`;
-                mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 15px rgba(${r}, ${g}, ${b}, 0.3)`;
+                // Unfaded mini player opacity from 0.3 to 0.45
+                mini.style.background = `radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.45) 0%, transparent 70%), var(--glass-bg)`;
+                mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 15px rgba(${r}, ${g}, ${b}, 0.45)`;
             }
         } catch (e) {}
     };
