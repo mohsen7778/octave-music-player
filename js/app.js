@@ -810,44 +810,29 @@ window.downloadTrack = async (track, btnElement) => {
     btnElement.style.pointerEvents = 'none';
 
     try {
-        const cobaltInstances = [
-            'https://api.cobalt.tools/api/json',
-            'https://cobalt-api.kwiateks.com/api/json'
-        ];
+        const response = await fetch('https://api.cobalt.tools/', {
+            method: 'POST',
+            headers: { 
+                'Accept': 'application/json',
+                'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ 
+                url: `https://www.youtube.com/watch?v=${track.videoId}`, 
+                downloadMode: 'audio',
+                audioFormat: 'mp3'
+            })
+        });
 
-        let downloadUrl = null;
-
-        for (const base of cobaltInstances) {
-            try {
-                const response = await fetch(base, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        url: `https://youtube.com/watch?v=${track.videoId}`,
-                        isAudioOnly: true,
-                        aFormat: 'mp3'
-                    })
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.url) {
-                        downloadUrl = data.url;
-                        break;
-                    }
-                }
-            } catch (e) {
-                continue; 
-            }
+        if (!response.ok) {
+            throw new Error("Cobalt V7 API rejected the request.");
         }
 
-        if (!downloadUrl) throw new Error("Cobalt API rejected the download.");
+        const data = await response.json();
+        
+        if (!data.url) throw new Error("No download URL returned.");
         
         const a = document.createElement('a');
-        a.href = downloadUrl;
+        a.href = data.url;
         a.target = '_blank';
         a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
         document.body.appendChild(a);
@@ -856,10 +841,10 @@ window.downloadTrack = async (track, btnElement) => {
         
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
-        alert("Download started!");
+
     } catch (error) {
-        console.error("Download failed:", error);
-        alert("Download failed. The Cobalt API network might be busy right now.");
+        console.error("Extraction Error:", error);
+        alert("Download failed. The extraction server might be temporarily overloaded.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
