@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (COBALT DOWNLOADER INTEGRATION)
+// app.js — Octave Full Flagship Engine (INVIDIOUS BLOB DOWNLOADER)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -777,7 +777,12 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- COBALT API DOWNLOAD ENGINE ---
+// --- INVIDIOUS BLOB DOWNLOAD ENGINE ---
+// Replaces the defunct Cobalt public API (shut down Nov 2024).
+// Fully serverless: reuses existing INVIDIOUS instance rotation.
+// Flow: fetch video metadata → pick best audio-only adaptiveFormat → 
+//       Blob fetch → ObjectURL → <a download> trigger.
+
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -799,52 +804,103 @@ window.isTrackDownloaded = (videoId) => {
 
 window.downloadTrack = async (track, btnElement) => {
     if (!track) return;
-    
+
     if (window.isTrackDownloaded(track.videoId)) {
         alert("You have already downloaded this track!");
         return;
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
-    btnElement.style.pointerEvents = 'none';
+    const setStatus = (icon, label) => {
+        btnElement.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${label}</span>`;
+        btnElement.style.pointerEvents = 'none';
+    };
+
+    setStatus('fa-spinner fa-spin', 'Fetching...');
+
+    // Step 1: Try each Invidious instance until one returns valid adaptiveFormats
+    let audioUrl = null;
+    let audioMime = 'audio/webm';
+    const instances = window.INVIDIOUS || [];
+
+    for (let i = 0; i < instances.length; i++) {
+        const base = instances[(window.invIdx + i) % instances.length];
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 7000);
+
+        try {
+            const res = await fetch(`${base}/api/v1/videos/${track.videoId}`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+
+            if (!res.ok) continue;
+
+            const data = await res.json();
+            const formats = data.adaptiveFormats || [];
+
+            // Filter to audio-only streams, prefer opus/webm but accept mp4a too
+            const audioFormats = formats
+                .filter(f => f.type && f.type.startsWith('audio/'))
+                .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+
+            if (audioFormats.length === 0) continue;
+
+            // Pick highest bitrate audio format
+            const best = audioFormats[0];
+            audioUrl = best.url;
+            audioMime = best.type.split(';')[0]; // strip codecs param
+            break;
+
+        } catch (err) {
+            clearTimeout(timeout);
+            continue;
+        }
+    }
+
+    if (!audioUrl) {
+        btnElement.innerHTML = originalHTML;
+        btnElement.style.pointerEvents = 'auto';
+        alert("Download failed: no Invidious instance returned audio streams. Try again shortly.");
+        return;
+    }
+
+    // Step 2: Blob fetch the audio stream URL
+    setStatus('fa-spinner fa-spin', 'Downloading...');
 
     try {
-        const response = await fetch('https://api.cobalt.tools/', {
-            method: 'POST',
-            headers: { 
-                'Accept': 'application/json',
-                'Content-Type': 'application/json' 
-            },
-            body: JSON.stringify({ 
-                url: `https://www.youtube.com/watch?v=${track.videoId}`, 
-                downloadMode: 'audio',
-                audioFormat: 'mp3'
-            })
-        });
+        const audioRes = await fetch(audioUrl);
 
-        if (!response.ok) {
-            throw new Error("Cobalt V7 API rejected the request.");
-        }
+        if (!audioRes.ok) throw new Error(`Stream fetch failed: ${audioRes.status}`);
 
-        const data = await response.json();
-        
-        if (!data.url) throw new Error("No download URL returned.");
-        
+        const blob = await audioRes.blob();
+
+        // Determine file extension from mime type
+        let ext = 'webm';
+        if (audioMime.includes('mp4') || audioMime.includes('m4a')) ext = 'm4a';
+        else if (audioMime.includes('ogg') || audioMime.includes('opus')) ext = 'ogg';
+
+        // Sanitize filename
+        const safeName = `${track.author.replace(/[\\/:*?"<>|]/g, '').trim()} - ${track.title.replace(/[\\/:*?"<>|]/g, '').trim()}.${ext}`;
+
+        // Step 3: Trigger download via ObjectURL
+        const objectUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = data.url;
-        a.target = '_blank';
-        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+        a.href = objectUrl;
+        a.download = safeName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        
+
+        // Revoke after short delay to allow browser to start the download
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
 
     } catch (error) {
-        console.error("Extraction Error:", error);
-        alert("Download failed. The extraction server might be temporarily overloaded.");
+        console.error("Blob download error:", error);
+        alert("Download failed: could not fetch the audio stream. The instance may have blocked direct access.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
