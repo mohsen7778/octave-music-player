@@ -777,6 +777,94 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
+// --- DOWNLOAD TRACK ENGINE ---
+window.getDownloadedTracks = () => {
+    try {
+        return JSON.parse(localStorage.getItem('octave_downloads')) || {};
+    } catch (e) {
+        return {};
+    }
+};
+
+window.markTrackDownloaded = (videoId) => {
+    const dls = window.getDownloadedTracks();
+    dls[videoId] = Date.now();
+    localStorage.setItem('octave_downloads', JSON.stringify(dls));
+};
+
+window.isTrackDownloaded = (videoId) => {
+    const dls = window.getDownloadedTracks();
+    return !!dls[videoId];
+};
+
+window.downloadTrack = async (track, btnElement) => {
+    if (!track) return;
+    
+    if (window.isTrackDownloaded(track.videoId)) {
+        alert("You have already downloaded this track!");
+        return;
+    }
+
+    const originalHTML = btnElement.innerHTML;
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
+    btnElement.style.pointerEvents = 'none';
+
+    try {
+        let url = '';
+        let blob = null;
+        
+        for (let i = 0; i < window.INVIDIOUS.length; i++) {
+            const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+            const testUrl = `${base}/latest_version?id=${track.videoId}&itag=140`;
+            try {
+                const response = await fetch(testUrl);
+                if (response.ok) {
+                    blob = await response.blob();
+                    url = testUrl;
+                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+                    break;
+                }
+            } catch (e) {
+                continue; 
+            }
+        }
+
+        if (!url || !blob) throw new Error("Could not fetch the track from servers.");
+        
+        const blobUrl = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        
+        const safeTitle = track.title.replace(/[\\/:*?"<>|]/g, "").trim();
+        const safeAuthor = track.author.replace(/[\\/:*?"<>|]/g, "").trim();
+        a.download = `${safeAuthor} - ${safeTitle}.m4a`;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        URL.revokeObjectURL(blobUrl);
+        window.markTrackDownloaded(track.videoId);
+        
+        alert("Download complete!");
+        document.getElementById('track-options-modal').classList.remove('active');
+
+    } catch (error) {
+        console.error("Download failed:", error);
+        alert("Download failed. Proxy network might be busy, try again later.");
+    } finally {
+        btnElement.innerHTML = originalHTML;
+        btnElement.style.pointerEvents = 'auto';
+    }
+};
+
+document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
+    if (window.OCTAVE.activeTrackForOptions) {
+        window.downloadTrack(window.OCTAVE.activeTrackForOptions, e.currentTarget);
+    }
+});
+
 document.getElementById('start-yt-import')?.addEventListener('click', async () => {
     const urlInput = document.getElementById('yt-playlist-url').value.trim();
     if (!urlInput) return;
@@ -839,6 +927,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     btn.innerHTML = 'Import';
     btn.disabled = false;
 });
+
 // ============================================================
 // CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
 // ============================================================
@@ -848,7 +937,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
         navigator.brave.isBrave().then(console.log).catch(() => {});
         // Synchronous check: many Brave versions expose isBrave sync
-        isBrave = navigator.brave.isBrave ? await (async () => false)() : false;
+        isBrave = navigator.brave.isBrave ? false : false;
     }
     // Better sync detection using a known property
     if (navigator.brave && navigator.brave.isBrave) {
