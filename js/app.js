@@ -818,9 +818,14 @@ window.downloadTrack = async (track, btnElement) => {
 
     setStatus('fa-spinner fa-spin', 'Fetching...');
 
-    // Step 1: Try each Invidious instance until one returns valid adaptiveFormats
-    let audioUrl = null;
+    // Step 1: Try each Invidious instance to get the best audio itag.
+    // We deliberately DO NOT use the raw adaptiveFormats URL — those are
+    // direct YouTube CDN (googlevideo.com) URLs which are CORS-blocked in browsers.
+    // Instead we grab the itag and reconstruct the URL through Invidious's own
+    // /latest_version proxy endpoint, which sets correct CORS headers.
+    let proxyUrl = null;
     let audioMime = 'audio/webm';
+    let successBase = null;
     const instances = window.INVIDIOUS || [];
 
     for (let i = 0; i < instances.length; i++) {
@@ -839,17 +844,21 @@ window.downloadTrack = async (track, btnElement) => {
             const data = await res.json();
             const formats = data.adaptiveFormats || [];
 
-            // Filter to audio-only streams, prefer opus/webm but accept mp4a too
+            // Filter to audio-only streams, sort by bitrate descending
             const audioFormats = formats
                 .filter(f => f.type && f.type.startsWith('audio/'))
                 .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
 
             if (audioFormats.length === 0) continue;
 
-            // Pick highest bitrate audio format
             const best = audioFormats[0];
-            audioUrl = best.url;
-            audioMime = best.type.split(';')[0]; // strip codecs param
+            audioMime = best.type.split(';')[0];
+
+            // Build the Invidious-proxied stream URL.
+            // local=true forces the instance to proxy the bytes rather than
+            // issuing a redirect to the YouTube CDN, avoiding the CORS block.
+            proxyUrl = `${base}/latest_version?id=${track.videoId}&itag=${best.itag}&local=true`;
+            successBase = base;
             break;
 
         } catch (err) {
@@ -858,20 +867,20 @@ window.downloadTrack = async (track, btnElement) => {
         }
     }
 
-    if (!audioUrl) {
+    if (!proxyUrl) {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
-        alert("Download failed: no Invidious instance returned audio streams. Try again shortly.");
+        alert("Download failed: no Invidious instance returned audio format data. Try again shortly.");
         return;
     }
 
-    // Step 2: Blob fetch the audio stream URL
+    // Step 2: Blob fetch through the Invidious proxy (CORS-safe)
     setStatus('fa-spinner fa-spin', 'Downloading...');
 
     try {
-        const audioRes = await fetch(audioUrl);
+        const audioRes = await fetch(proxyUrl);
 
-        if (!audioRes.ok) throw new Error(`Stream fetch failed: ${audioRes.status}`);
+        if (!audioRes.ok) throw new Error(`Proxy fetch failed: ${audioRes.status}`);
 
         const blob = await audioRes.blob();
 
@@ -883,7 +892,7 @@ window.downloadTrack = async (track, btnElement) => {
         // Sanitize filename
         const safeName = `${track.author.replace(/[\\/:*?"<>|]/g, '').trim()} - ${track.title.replace(/[\\/:*?"<>|]/g, '').trim()}.${ext}`;
 
-        // Step 3: Trigger download via ObjectURL
+        // Step 3: ObjectURL → <a download> trigger
         const objectUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = objectUrl;
@@ -900,7 +909,7 @@ window.downloadTrack = async (track, btnElement) => {
 
     } catch (error) {
         console.error("Blob download error:", error);
-        alert("Download failed: could not fetch the audio stream. The instance may have blocked direct access.");
+        alert("Download failed: the Invidious proxy blocked the stream. Try again — a different instance will be picked next time.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
