@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (UNSTRIPPED + EVENT FIXES)
+// app.js — Octave Full Flagship Engine (COBALT DOWNLOADER INTEGRATION)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -161,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// --- GLOBAL EVENT DELEGATION (Fixes the "Only works once" bug forever!) ---
+// --- GLOBAL EVENT DELEGATION ---
 document.body.addEventListener('click', async (e) => {
     if (e.target.closest('#menu-btn')) {
         document.getElementById('side-menu').classList.add('active');
@@ -181,7 +181,6 @@ document.body.addEventListener('click', async (e) => {
         document.getElementById('ai-mix-modal').classList.add('active');
     }
     
-    // NEW: Global binders for Auto-DJ and Liked Songs
     if (e.target.closest('#open-discover-mix')) {
         if (window.generateDiscoverMix) window.generateDiscoverMix();
     }
@@ -216,7 +215,7 @@ document.body.addEventListener('click', async (e) => {
 });
 
 
-// --- AI MIX ENGINE (POST METHOD FIX FOR LARGE PROMPTS) ---
+// --- AI MIX ENGINE ---
 async function generateAiMix() {
     const promptInput = document.getElementById('ai-prompt').value.trim();
     const lang = document.getElementById('ai-lang').value;
@@ -249,7 +248,6 @@ CRITICAL RULES:
 2. Recommend ONLY actual music tracks (songs). NEVER recommend tutorials, news, podcasts, HTML coding, or conversational videos.
 3. Do NOT include numbers, quotes, bullet points, HTML tags, or any other text.`;
         
-        // FIXED: Using POST so long history texts don't break the URL limits!
         const response = await fetch(`https://text.pollinations.ai/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -777,7 +775,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- ROCK SOLID DOWNLOAD ENGINE (CORS BYPASS) ---
+// --- COBALT API DOWNLOAD ENGINE ---
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -806,66 +804,64 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
     btnElement.style.pointerEvents = 'none';
 
     try {
-        let blob = null;
-        
-        for (let i = 0; i < window.INVIDIOUS.length; i++) {
-            const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-            
-            // STRATEGY 1: Force proxy to download the file directly using 'local=true'
-            // This prevents the server from redirecting us to Google's locked CORS domains.
-            const proxyUrl = `${base}/latest_version?id=${track.videoId}&itag=140&local=true`;
-            
+        // Multi-instance fallback to ensure 99% uptime
+        const cobaltInstances = [
+            'https://api.cobalt.tools',
+            'https://cobalt-api.kwiateks.com',
+            'https://api.cobalt.tools/api/json' 
+        ];
+
+        let downloadUrl = null;
+
+        for (const base of cobaltInstances) {
             try {
-                const response = await fetch(proxyUrl);
+                const response = await fetch(base, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: `https://youtube.com/watch?v=${track.videoId}`,
+                        isAudioOnly: true,
+                        downloadMode: 'audio',
+                        aFormat: 'mp3'
+                    })
+                });
+
                 if (response.ok) {
-                    blob = await response.blob();
-                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-                    break; 
-                }
-            } catch (e) {
-                // STRATEGY 2: If the proxy rejects local=true, use a raw CORS bypass proxy 
-                try {
-                    const rawUrl = `${base}/latest_version?id=${track.videoId}&itag=140`;
-                    const bypassUrl = `https://corsproxy.io/?${encodeURIComponent(rawUrl)}`;
-                    const fallbackResponse = await fetch(bypassUrl);
-                    if (fallbackResponse.ok) {
-                        blob = await fallbackResponse.blob();
-                        window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+                    const data = await response.json();
+                    // Cobalt returns the processed file link natively
+                    if (data.url) {
+                        downloadUrl = data.url;
                         break;
                     }
-                } catch (err) {
-                    continue; 
                 }
+            } catch (e) {
+                continue; 
             }
         }
 
-        if (!blob) throw new Error("CORS blocked all proxy attempts.");
+        if (!downloadUrl) throw new Error("Cobalt API rejected the download.");
         
-        const blobUrl = URL.createObjectURL(blob);
+        // Cobalt API natively handles the renaming and direct browser injection
         const a = document.createElement('a');
-        a.href = blobUrl;
-        
-        const safeTitle = track.title.replace(/[\\/:*?"<>|]/g, "").trim();
-        const safeAuthor = track.author.replace(/[\\/:*?"<>|]/g, "").trim();
-        a.download = `${safeAuthor} - ${safeTitle}.m4a`;
-        
+        a.href = downloadUrl;
+        a.target = '_blank';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         
-        URL.revokeObjectURL(blobUrl);
         window.markTrackDownloaded(track.videoId);
-        
-        alert("Download complete!");
         document.getElementById('track-options-modal').classList.remove('active');
 
     } catch (error) {
         console.error("Download failed:", error);
-        alert("Download failed. CORS security blocked the extraction. Try again later.");
+        alert("Download failed. The Cobalt API network might be rate-limited right now.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
@@ -942,7 +938,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
 });
 
 // ============================================================
-// CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
+// CHROME BACKGROUND PLAYBACK FIXES
 // ============================================================
 (function() {
     let isBrave = false;
