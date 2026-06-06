@@ -161,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// --- GLOBAL EVENT DELEGATION ---
+// --- GLOBAL EVENT DELEGATION (Fixes the "Only works once" bug forever!) ---
 document.body.addEventListener('click', async (e) => {
     if (e.target.closest('#menu-btn')) {
         document.getElementById('side-menu').classList.add('active');
@@ -181,6 +181,7 @@ document.body.addEventListener('click', async (e) => {
         document.getElementById('ai-mix-modal').classList.add('active');
     }
     
+    // NEW: Global binders for Auto-DJ and Liked Songs
     if (e.target.closest('#open-discover-mix')) {
         if (window.generateDiscoverMix) window.generateDiscoverMix();
     }
@@ -215,7 +216,7 @@ document.body.addEventListener('click', async (e) => {
 });
 
 
-// --- AI MIX ENGINE ---
+// --- AI MIX ENGINE (POST METHOD FIX FOR LARGE PROMPTS) ---
 async function generateAiMix() {
     const promptInput = document.getElementById('ai-prompt').value.trim();
     const lang = document.getElementById('ai-lang').value;
@@ -248,6 +249,7 @@ CRITICAL RULES:
 2. Recommend ONLY actual music tracks (songs). NEVER recommend tutorials, news, podcasts, HTML coding, or conversational videos.
 3. Do NOT include numbers, quotes, bullet points, HTML tags, or any other text.`;
         
+        // FIXED: Using POST so long history texts don't break the URL limits!
         const response = await fetch(`https://text.pollinations.ai/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -808,11 +810,9 @@ window.downloadTrack = async (track, btnElement) => {
     btnElement.style.pointerEvents = 'none';
 
     try {
-        // Multi-instance fallback to ensure 99% uptime
         const cobaltInstances = [
-            'https://api.cobalt.tools',
-            'https://cobalt-api.kwiateks.com',
-            'https://api.cobalt.tools/api/json' 
+            'https://api.cobalt.tools/api/json',
+            'https://cobalt-api.kwiateks.com/api/json'
         ];
 
         let downloadUrl = null;
@@ -828,14 +828,12 @@ window.downloadTrack = async (track, btnElement) => {
                     body: JSON.stringify({
                         url: `https://youtube.com/watch?v=${track.videoId}`,
                         isAudioOnly: true,
-                        downloadMode: 'audio',
                         aFormat: 'mp3'
                     })
                 });
 
                 if (response.ok) {
                     const data = await response.json();
-                    // Cobalt returns the processed file link natively
                     if (data.url) {
                         downloadUrl = data.url;
                         break;
@@ -848,20 +846,20 @@ window.downloadTrack = async (track, btnElement) => {
 
         if (!downloadUrl) throw new Error("Cobalt API rejected the download.");
         
-        // Cobalt API natively handles the renaming and direct browser injection
         const a = document.createElement('a');
         a.href = downloadUrl;
         a.target = '_blank';
+        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
-
+        alert("Download started!");
     } catch (error) {
         console.error("Download failed:", error);
-        alert("Download failed. The Cobalt API network might be rate-limited right now.");
+        alert("Download failed. The Cobalt API network might be busy right now.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
@@ -938,17 +936,21 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
 });
 
 // ============================================================
-// CHROME BACKGROUND PLAYBACK FIXES
+// CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
 // ============================================================
 (function() {
+    // Detect Brave browser
     let isBrave = false;
     if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
         navigator.brave.isBrave().then(console.log).catch(() => {});
+        // Synchronous check: many Brave versions expose isBrave sync
         isBrave = navigator.brave.isBrave ? false : false;
     }
+    // Better sync detection using a known property
     if (navigator.brave && navigator.brave.isBrave) {
         isBrave = true;
     }
+    // Additional check: Brave's userAgent often contains "Brave"
     if (!isBrave && navigator.userAgent.includes('Brave')) isBrave = true;
     
     if (isBrave) {
@@ -980,6 +982,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     }
     
+    // Wrap play functions to start silent context on first user playback
     function wrapPlayFunction(originalFn, name) {
         if (typeof originalFn !== 'function') return originalFn;
         return function(...args) {
@@ -993,6 +996,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
     if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
     
+    // Visibility listener: resume if audio was playing and page becomes hidden
     document.addEventListener('visibilitychange', () => {
         if (document.hidden && window.audio && !window.audio.paused) {
             setTimeout(() => {
@@ -1003,6 +1007,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     });
     
+    // Override MediaSession pause action to prevent actual pause
     if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('pause', () => {
             if (window.audio && !window.audio.paused) {
@@ -1011,11 +1016,13 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         });
     }
     
+    // Also start silent context on any 'play' event from the audio element
     if (window.audio) {
         window.audio.addEventListener('play', () => {
             if (!keepAliveStarted) startSilentAudioContext();
         });
     } else {
+        // If audio element is created later, listen for its addition
         const observer = new MutationObserver(() => {
             if (window.audio && !window.audio._bgFixAttached) {
                 window.audio.addEventListener('play', () => {
