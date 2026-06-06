@@ -777,7 +777,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- DOWNLOAD TRACK ENGINE ---
+// --- ROCK SOLID DOWNLOAD ENGINE (CORS BYPASS) ---
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -810,29 +810,42 @@ window.downloadTrack = async (track, btnElement) => {
     btnElement.style.pointerEvents = 'none';
 
     try {
-        let url = '';
         let blob = null;
         
         for (let i = 0; i < window.INVIDIOUS.length; i++) {
             const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-            const testUrl = `${base}/latest_version?id=${track.videoId}&itag=140`;
+            
+            // STRATEGY 1: Force proxy to download the file directly using 'local=true'
+            // This prevents the server from redirecting us to Google's locked CORS domains.
+            const proxyUrl = `${base}/latest_version?id=${track.videoId}&itag=140&local=true`;
+            
             try {
-                const response = await fetch(testUrl);
+                const response = await fetch(proxyUrl);
                 if (response.ok) {
                     blob = await response.blob();
-                    url = testUrl;
                     window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-                    break;
+                    break; 
                 }
             } catch (e) {
-                continue; 
+                // STRATEGY 2: If the proxy rejects local=true, use a raw CORS bypass proxy 
+                try {
+                    const rawUrl = `${base}/latest_version?id=${track.videoId}&itag=140`;
+                    const bypassUrl = `https://corsproxy.io/?${encodeURIComponent(rawUrl)}`;
+                    const fallbackResponse = await fetch(bypassUrl);
+                    if (fallbackResponse.ok) {
+                        blob = await fallbackResponse.blob();
+                        window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+                        break;
+                    }
+                } catch (err) {
+                    continue; 
+                }
             }
         }
 
-        if (!url || !blob) throw new Error("Could not fetch the track from servers.");
+        if (!blob) throw new Error("CORS blocked all proxy attempts.");
         
         const blobUrl = URL.createObjectURL(blob);
-        
         const a = document.createElement('a');
         a.href = blobUrl;
         
@@ -852,7 +865,7 @@ window.downloadTrack = async (track, btnElement) => {
 
     } catch (error) {
         console.error("Download failed:", error);
-        alert("Download failed. Proxy network might be busy, try again later.");
+        alert("Download failed. CORS security blocked the extraction. Try again later.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
@@ -932,18 +945,14 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
 // CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
 // ============================================================
 (function() {
-    // Detect Brave browser
     let isBrave = false;
     if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
         navigator.brave.isBrave().then(console.log).catch(() => {});
-        // Synchronous check: many Brave versions expose isBrave sync
         isBrave = navigator.brave.isBrave ? false : false;
     }
-    // Better sync detection using a known property
     if (navigator.brave && navigator.brave.isBrave) {
         isBrave = true;
     }
-    // Additional check: Brave's userAgent often contains "Brave"
     if (!isBrave && navigator.userAgent.includes('Brave')) isBrave = true;
     
     if (isBrave) {
@@ -975,7 +984,6 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     }
     
-    // Wrap play functions to start silent context on first user playback
     function wrapPlayFunction(originalFn, name) {
         if (typeof originalFn !== 'function') return originalFn;
         return function(...args) {
@@ -989,7 +997,6 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
     if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
     
-    // Visibility listener: resume if audio was playing and page becomes hidden
     document.addEventListener('visibilitychange', () => {
         if (document.hidden && window.audio && !window.audio.paused) {
             setTimeout(() => {
@@ -1000,7 +1007,6 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     });
     
-    // Override MediaSession pause action to prevent actual pause
     if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('pause', () => {
             if (window.audio && !window.audio.paused) {
@@ -1009,13 +1015,11 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         });
     }
     
-    // Also start silent context on any 'play' event from the audio element
     if (window.audio) {
         window.audio.addEventListener('play', () => {
             if (!keepAliveStarted) startSilentAudioContext();
         });
     } else {
-        // If audio element is created later, listen for its addition
         const observer = new MutationObserver(() => {
             if (window.audio && !window.audio._bgFixAttached) {
                 window.audio.addEventListener('play', () => {
