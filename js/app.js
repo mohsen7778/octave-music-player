@@ -777,18 +777,29 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- INVIDIOUS BLOB DOWNLOAD ENGINE ---
-// Replaces the defunct Cobalt public API (shut down Nov 2024).
-// Fully serverless: reuses existing INVIDIOUS instance rotation.
-// Flow: fetch video metadata → pick best audio-only adaptiveFormat → 
-//       Blob fetch → ObjectURL → <a download> trigger.
+// --- MULTI-ENGINE DOWNLOAD SYSTEM ---
+// Root cause of all previous failures: YouTube CDN and Invidious /videoplayback
+// both lack CORS headers, so browser blocks any fetch() of stream bytes.
+// Fix: wrap the stream URL with corsproxy.io which adds Access-Control-Allow-Origin: *.
+//
+// Waterfall:
+//   1. Piped API  → stream URL → corsproxy.io wrapper → Blob fetch
+//   2. Invidious  → ?local=true proxied URL → corsproxy.io wrapper → Blob fetch
+//   3. New tab    → absolute last resort
+
+const PIPED_INSTANCES = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.tokhmi.xyz',
+    'https://pipedapi.moomoo.me',
+    'https://api.piped.yt',
+    'https://pipedapi.syncpundit.io',
+    'https://piped-api.garudalinux.org',
+    'https://api.piped.projectsegfau.lt'
+];
 
 window.getDownloadedTracks = () => {
-    try {
-        return JSON.parse(localStorage.getItem('octave_downloads')) || {};
-    } catch (e) {
-        return {};
-    }
+    try { return JSON.parse(localStorage.getItem('octave_downloads')) || {}; }
+    catch (e) { return {}; }
 };
 
 window.markTrackDownloaded = (videoId) => {
@@ -797,16 +808,31 @@ window.markTrackDownloaded = (videoId) => {
     localStorage.setItem('octave_downloads', JSON.stringify(dls));
 };
 
-window.isTrackDownloaded = (videoId) => {
-    const dls = window.getDownloadedTracks();
-    return !!dls[videoId];
-};
+window.isTrackDownloaded = (videoId) => !!window.getDownloadedTracks()[videoId];
+
+function corsWrap(url) {
+    return `https://corsproxy.io/?${encodeURIComponent(url)}`;
+}
+
+async function tryBlobDownload(streamUrl, filename) {
+    const res = await fetch(corsWrap(streamUrl));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+}
 
 window.downloadTrack = async (track, btnElement) => {
     if (!track) return;
 
     if (window.isTrackDownloaded(track.videoId)) {
-        alert("You have already downloaded this track!");
+        alert("Already downloaded this track!");
         return;
     }
 
@@ -816,41 +842,38 @@ window.downloadTrack = async (track, btnElement) => {
         btnElement.style.pointerEvents = 'none';
     };
 
+    const safeName = (ext) =>
+        `${track.author.replace(/[\\/:*?"<>|]/g, '').trim()} - ${track.title.replace(/[\\/:*?"<>|]/g, '').trim()}.${ext}`;
+
     setStatus('fa-spinner fa-spin', 'Fetching...');
 
-    // Step 1: Try each Invidious instance until one returns valid adaptiveFormats
-    let audioUrl = null;
-    let audioMime = 'audio/webm';
-    const instances = window.INVIDIOUS || [];
-
-    for (let i = 0; i < instances.length; i++) {
-        const base = instances[(window.invIdx + i) % instances.length];
+    // ── STRATEGY 1: Piped API ────────────────────────────────────────────────
+    for (const pipedBase of PIPED_INSTANCES) {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 7000);
-
+        const timeout = setTimeout(() => controller.abort(), 8000);
         try {
-            const res = await fetch(`${base}/api/v1/videos/${track.videoId}`, {
-                signal: controller.signal
-            });
+            const res = await fetch(`${pipedBase}/streams/${track.videoId}`, { signal: controller.signal });
             clearTimeout(timeout);
-
             if (!res.ok) continue;
 
             const data = await res.json();
-            const formats = data.adaptiveFormats || [];
+            const streams = (data.audioStreams || []).sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+            if (!streams.length) continue;
 
-            // Filter to audio-only streams, prefer opus/webm but accept mp4a too
-            const audioFormats = formats
-                .filter(f => f.type && f.type.startsWith('audio/'))
-                .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+            const best = streams[0];
+            const mime = best.mimeType || '';
+            let ext = 'webm';
+            if (mime.includes('mp4') || mime.includes('m4a')) ext = 'm4a';
+            else if (mime.includes('ogg') || mime.includes('opus')) ext = 'ogg';
 
-            if (audioFormats.length === 0) continue;
+            setStatus('fa-spinner fa-spin', 'Downloading...');
+            await tryBlobDownload(best.url, safeName(ext));
 
-            // Pick highest bitrate audio format
-            const best = audioFormats[0];
-            audioUrl = best.url;
-            audioMime = best.type.split(';')[0]; // strip codecs param
-            break;
+            window.markTrackDownloaded(track.videoId);
+            document.getElementById('track-options-modal').classList.remove('active');
+            btnElement.innerHTML = originalHTML;
+            btnElement.style.pointerEvents = 'auto';
+            return;
 
         } catch (err) {
             clearTimeout(timeout);
@@ -858,53 +881,70 @@ window.downloadTrack = async (track, btnElement) => {
         }
     }
 
-    if (!audioUrl) {
-        btnElement.innerHTML = originalHTML;
-        btnElement.style.pointerEvents = 'auto';
-        alert("Download failed: no Invidious instance returned audio streams. Try again shortly.");
-        return;
+    // ── STRATEGY 2: Invidious ?local=true ───────────────────────────────────
+    // ?local=true makes adaptiveFormats[].url point to the Invidious instance
+    // domain (/videoplayback) rather than googlevideo.com. Still needs the
+    // corsproxy wrapper since /videoplayback lacks CORS headers.
+    setStatus('fa-spinner fa-spin', 'Trying fallback...');
+    const invInstances = window.INVIDIOUS || [];
+
+    for (let i = 0; i < invInstances.length; i++) {
+        const base = invInstances[(window.invIdx + i) % invInstances.length];
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 7000);
+        try {
+            const res = await fetch(`${base}/api/v1/videos/${track.videoId}?local=true`, { signal: controller.signal });
+            clearTimeout(timeout);
+            if (!res.ok) continue;
+
+            const data = await res.json();
+            const formats = (data.adaptiveFormats || [])
+                .filter(f => f.type && f.type.startsWith('audio/'))
+                .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+            if (!formats.length) continue;
+
+            const best = formats[0];
+            const mime = best.type.split(';')[0];
+            let ext = 'webm';
+            if (mime.includes('mp4') || mime.includes('m4a')) ext = 'm4a';
+            else if (mime.includes('ogg') || mime.includes('opus')) ext = 'ogg';
+
+            setStatus('fa-spinner fa-spin', 'Downloading...');
+            await tryBlobDownload(best.url, safeName(ext));
+
+            window.markTrackDownloaded(track.videoId);
+            document.getElementById('track-options-modal').classList.remove('active');
+            btnElement.innerHTML = originalHTML;
+            btnElement.style.pointerEvents = 'auto';
+            return;
+
+        } catch (err) {
+            clearTimeout(timeout);
+            continue;
+        }
     }
 
-    // Step 2: Blob fetch the audio stream URL
-    setStatus('fa-spinner fa-spin', 'Downloading...');
-
+    // ── STRATEGY 3: New tab last resort ─────────────────────────────────────
     try {
-        const audioRes = await fetch(audioUrl);
-
-        if (!audioRes.ok) throw new Error(`Stream fetch failed: ${audioRes.status}`);
-
-        const blob = await audioRes.blob();
-
-        // Determine file extension from mime type
-        let ext = 'webm';
-        if (audioMime.includes('mp4') || audioMime.includes('m4a')) ext = 'm4a';
-        else if (audioMime.includes('ogg') || audioMime.includes('opus')) ext = 'ogg';
-
-        // Sanitize filename
-        const safeName = `${track.author.replace(/[\\/:*?"<>|]/g, '').trim()} - ${track.title.replace(/[\\/:*?"<>|]/g, '').trim()}.${ext}`;
-
-        // Step 3: Trigger download via ObjectURL
-        const objectUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = safeName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-
-        // Revoke after short delay to allow browser to start the download
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-
-        window.markTrackDownloaded(track.videoId);
-        document.getElementById('track-options-modal').classList.remove('active');
-
-    } catch (error) {
-        console.error("Blob download error:", error);
-        alert("Download failed: could not fetch the audio stream. The instance may have blocked direct access.");
-    } finally {
-        btnElement.innerHTML = originalHTML;
-        btnElement.style.pointerEvents = 'auto';
+        const base = invInstances[window.invIdx % invInstances.length];
+        const res = await fetch(`${base}/api/v1/videos/${track.videoId}?local=true`);
+        const data = await res.json();
+        const formats = (data.adaptiveFormats || [])
+            .filter(f => f.type && f.type.startsWith('audio/'))
+            .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+        if (formats.length > 0) {
+            window.open(formats[0].url, '_blank');
+            alert("Opened audio in a new tab. Use your browser's save option.");
+            document.getElementById('track-options-modal').classList.remove('active');
+        } else {
+            alert("Download failed: no audio stream found.");
+        }
+    } catch (e) {
+        alert("Download failed: all engines exhausted.");
     }
+
+    btnElement.innerHTML = originalHTML;
+    btnElement.style.pointerEvents = 'auto';
 };
 
 document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
