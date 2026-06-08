@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (APIFY PROXY INTEGRATION)
+// app.js — Octave Full Flagship Engine (APIFY DIRECT STREAM)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -777,7 +777,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- CLOUDFLARE WORKER + APIFY DOWNLOAD ENGINE ---
+// --- CLOUDFLARE WORKER + APIFY DIRECT STREAM ENGINE ---
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -806,7 +806,7 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
     btnElement.style.pointerEvents = 'none';
 
     try {
@@ -824,25 +824,27 @@ window.downloadTrack = async (track, btnElement) => {
             throw new Error("Worker proxy rejected the request.");
         }
 
-        const data = await response.json();
+        // Catch the raw file stream directly from the worker
+        const blob = await response.blob();
+        const objectUrl = window.URL.createObjectURL(blob);
         
-        if (!data.url) throw new Error("No download URL returned from proxy.");
-        
-        // Use the pristine audio URL handed back from Apify
+        // Force the browser to trigger a local download
         const a = document.createElement('a');
-        a.href = data.url;
-        a.target = '_blank';
-        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+        a.href = objectUrl;
+        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.m4a`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+        
+        // Clean up memory
+        window.URL.revokeObjectURL(objectUrl);
         
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
         console.error("Extraction Error:", error);
-        alert("Download failed. Make sure your Cloudflare Worker is active and Apify credits are available.");
+        alert("Download failed. Check Telegram logs for details.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
