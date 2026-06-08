@@ -797,7 +797,6 @@ window.isTrackDownloaded = (videoId) => {
     return !!dls[videoId];
 };
 
-// === NEW: Robust fetch-to-blob download ===
 window.downloadTrack = async (track, btnElement) => {
     if (!track) return;
     
@@ -813,7 +812,6 @@ window.downloadTrack = async (track, btnElement) => {
     try {
         const proxyUrl = `https://octavecd9.bdra77367.workers.dev/?id=${track.videoId}`;
         
-        // Fetch the audio through the proxy as a Blob
         const response = await fetch(proxyUrl, { method: 'GET' });
         
         if (!response.ok) {
@@ -822,31 +820,33 @@ window.downloadTrack = async (track, btnElement) => {
         
         const blob = await response.blob();
         
-        // Safety check: if the blob is tiny, it's probably an error page, not audio
-        if (blob.size < 1024) {
-            throw new Error("Received empty or invalid audio file.");
+        // CRITICAL: Reject files smaller than 50 KB — they are error pages, not audio
+        if (blob.size < 50000) {
+            throw new Error("Audio unavailable. The track may be restricted or the source node is down.");
         }
 
-        // Create a same-origin Blob URL so the browser actually saves the file
         const blobUrl = URL.createObjectURL(blob);
+        
+        // Use the real song title as the filename
+        const safeTitle = track.title.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 30).trim();
+        const safeArtist = track.author.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 20).trim();
+        const filename = `${safeTitle || 'Track'} - ${safeArtist || 'Unknown'}.m4a`;
         
         const a = document.createElement('a');
         a.href = blobUrl;
-        a.download = `Octave_Track_${track.videoId}.m4a`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         
-        // Clean up the blob URL after a short delay
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         
-        // Only mark as downloaded after confirmed success
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (err) {
         console.error('Download failed:', err);
-        alert("Download failed. The audio node may be down or the track is unavailable. Please try again.");
+        alert("Download failed: " + err.message);
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.disabled = false;
