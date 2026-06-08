@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (APIFY DIRECT STREAM)
+// app.js — Octave Full Flagship Engine (APIFY HYBRID BLOB STREAM)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -777,7 +777,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- CLOUDFLARE WORKER + APIFY DIRECT STREAM ENGINE ---
+// --- APIFY DIRECT BLOB STREAM DOWNLOAD ENGINE ---
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -806,12 +806,12 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
     btnElement.style.pointerEvents = 'none';
 
     try {
-        // Send a POST request to your secure proxy
-        const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
+        // 1. Get the secure link from your proxy (which uses Apify behind the scenes)
+        const proxyResponse = await fetch('https://octavecd9.bdra77367.workers.dev', {
             method: 'POST',
             headers: { 
                 'Accept': 'application/json',
@@ -820,15 +820,26 @@ window.downloadTrack = async (track, btnElement) => {
             body: JSON.stringify({ videoId: track.videoId })
         });
 
-        if (!response.ok) {
+        if (!proxyResponse.ok) {
             throw new Error("Worker proxy rejected the request.");
         }
 
-        // Catch the raw file stream directly from the worker
-        const blob = await response.blob();
+        const data = await proxyResponse.json();
+        
+        if (!data.url) throw new Error("No download URL returned from proxy.");
+
+        btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
+
+        // 2. Fetch the actual file bytes using the phone's internet (bypasses YouTube CDN blocks)
+        // YouTube's CDN natively allows cross-origin resource sharing (CORS) for media.
+        const audioResponse = await fetch(data.url);
+        if (!audioResponse.ok) throw new Error("Failed to pull media from YouTube CDN.");
+
+        // 3. Convert to a local file object (Blob) inside the app
+        const blob = await audioResponse.blob();
         const objectUrl = window.URL.createObjectURL(blob);
         
-        // Force the browser to trigger a local download
+        // 4. Force a clean, local download (bypasses popup blockers and CORS download rules)
         const a = document.createElement('a');
         a.href = objectUrl;
         a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.m4a`;
@@ -844,7 +855,7 @@ window.downloadTrack = async (track, btnElement) => {
         
     } catch (error) {
         console.error("Extraction Error:", error);
-        alert("Download failed. Check Telegram logs for details.");
+        alert("Download failed. Check Telegram logs or your internet connection.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
