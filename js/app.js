@@ -797,7 +797,7 @@ window.isTrackDownloaded = (videoId) => {
     return !!dls[videoId];
 };
 
-window.downloadTrack = async (track, btnElement) => {
+window.downloadTrack = (track, btnElement) => {
     if (!track) return;
     
     if (window.isTrackDownloaded(track.videoId)) {
@@ -806,47 +806,25 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
-    btnElement.style.pointerEvents = 'none';
-
-    try {
-        // Using your dedicated Cloudflare Worker Proxy
-        const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
-            method: 'POST',
-            headers: { 
-                'Accept': 'application/json',
-                'Content-Type': 'application/json' 
-            },
-            body: JSON.stringify({ videoId: track.videoId })
-        });
-
-        if (!response.ok) {
-            throw new Error("Worker rejected the request.");
-        }
-
-        const data = await response.json();
-        
-        if (!data.url) throw new Error("No download URL returned from proxy.");
-        
-        // The clean, CORS-free download link sent back from your proxy
-        const a = document.createElement('a');
-        a.href = data.url;
-        a.target = '_blank';
-        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        window.markTrackDownloaded(track.videoId);
-        document.getElementById('track-options-modal').classList.remove('active');
-
-    } catch (error) {
-        console.error("Extraction Error:", error);
-        alert("Download failed. Make sure your Cloudflare Worker is fully active.");
-    } finally {
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Starting...</span>';
+    
+    // 1. Point directly to your new custom proxy
+    const proxyUrl = `https://octavecd9.bdra77367.workers.dev/?id=${track.videoId}`;
+    
+    // 2. Since the proxy forces the "attachment" header, the browser handles the download natively
+    const a = document.createElement('a');
+    a.href = proxyUrl;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // 3. Mark as downloaded and close the menu
+    window.markTrackDownloaded(track.videoId);
+    document.getElementById('track-options-modal').classList.remove('active');
+    
+    setTimeout(() => {
         btnElement.innerHTML = originalHTML;
-        btnElement.style.pointerEvents = 'auto';
-    }
+    }, 1500);
 };
 
 document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
