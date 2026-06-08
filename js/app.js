@@ -820,14 +820,13 @@ window.downloadTrack = async (track, btnElement) => {
         
         const blob = await response.blob();
         
-        // CRITICAL: Reject files smaller than 50 KB — they are error pages, not audio
-        if (blob.size < 50000) {
-            throw new Error("Audio unavailable. The track may be restricted or the source node is down.");
+        // Reject files smaller than 30 KB — they are error pages, not audio
+        if (blob.size < 30000) {
+            throw new Error("Audio unavailable. All extraction nodes failed or the track is restricted.");
         }
 
         const blobUrl = URL.createObjectURL(blob);
         
-        // Use the real song title as the filename
         const safeTitle = track.title.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 30).trim();
         const safeArtist = track.author.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 20).trim();
         const filename = `${safeTitle || 'Track'} - ${safeArtist || 'Unknown'}.m4a`;
