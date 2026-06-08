@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (CUSTOM PROXY INTEGRATION)
+// app.js — Octave Full Flagship Engine (APIFY PROXY INTEGRATION)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -777,7 +777,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- DOWNLOAD ENGINE (Client-side only) ---
+// --- CLOUDFLARE WORKER + APIFY DOWNLOAD ENGINE ---
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -797,45 +797,6 @@ window.isTrackDownloaded = (videoId) => {
     return !!dls[videoId];
 };
 
-// Helper: validate that a blob is actual audio by loading it into an <audio> element
-const validateAudioBlob = (blobUrl) => {
-    return new Promise((resolve, reject) => {
-        const audio = new Audio();
-        audio.preload = 'metadata';
-
-        const timeout = setTimeout(() => {
-            cleanup();
-            reject(new Error("Audio validation timeout"));
-        }, 8000);
-
-        const cleanup = () => {
-            clearTimeout(timeout);
-            audio.removeEventListener('loadedmetadata', onLoad);
-            audio.removeEventListener('error', onError);
-            audio.src = '';
-        };
-
-        const onLoad = () => {
-            if (audio.duration > 0 && isFinite(audio.duration)) {
-                cleanup();
-                resolve(true);
-            } else {
-                cleanup();
-                reject(new Error("Invalid audio duration"));
-            }
-        };
-
-        const onError = () => {
-            cleanup();
-            reject(new Error("Audio load error"));
-        };
-
-        audio.addEventListener('loadedmetadata', onLoad);
-        audio.addEventListener('error', onError);
-        audio.src = blobUrl;
-    });
-};
-
 window.downloadTrack = async (track, btnElement) => {
     if (!track) return;
     
@@ -845,144 +806,46 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Fetching...</span>';
-    btnElement.disabled = true;
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
+    btnElement.style.pointerEvents = 'none';
 
-    const safeTitle = track.title.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 30).trim();
-    const safeArtist = track.author.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 20).trim();
-    const filename = `${safeTitle || 'Track'} - ${safeArtist || 'Unknown'}.m4a`;
-
-    // Get the audio URL from the currently playing element if this track is loaded
-    let primaryUrl = null;
-    if (window.audio && window.OCTAVE.currentIndex >= 0) {
-        const current = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        if (current && current.videoId === track.videoId) {
-            if (window.audio.currentSrc) primaryUrl = window.audio.currentSrc;
-            else if (window.audio.src) primaryUrl = window.audio.src;
-        }
-    }
-
-    // Build instance list from app's config or fallback
-    const instances = (window.INVIDIOUS && window.INVIDIOUS.length > 0) ? window.INVIDIOUS : [
-        "https://inv.tux.pizza",
-        "https://invidious.nerdvpn.de",
-        "https://invidious.no-logs.com",
-        "https://invidious.perennialte.ch",
-        "https://iv.nboeck.de",
-        "https://iv.datura.network"
-    ];
-
-    // Start from the current rotation index so we don't hammer the same dead one every time
-    const startIdx = (window.invIdx || 0) % instances.length;
-
-    // Try each instance
-    for (let i = 0; i < instances.length; i++) {
-        const idx = (startIdx + i) % instances.length;
-        const instance = instances[idx];
-        
-        // Use the primary URL if we have it, otherwise construct one
-        const audioUrl = primaryUrl || `${instance}/latest_version?id=${track.videoId}&itag=140&local=true`;
-
-        // ═══════════════════════════════════════════════════════════
-        // ATTEMPT 1: Direct CORS fetch (some instances send proper headers)
-        // ═══════════════════════════════════════════════════════════
-        try {
-            const response = await fetch(audioUrl, { method: 'GET', redirect: 'follow' });
-            
-            if (response.ok) {
-                const blob = await response.blob();
-                
-                // If we got a real file (> 30 KB), save it immediately
-                if (blob.size >= 30000) {
-                    const blobUrl = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = blobUrl;
-                    a.download = filename;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-                    
-                    window.markTrackDownloaded(track.videoId);
-                    document.getElementById('track-options-modal').classList.remove('active');
-                    btnElement.innerHTML = originalHTML;
-                    btnElement.disabled = false;
-                    return;
-                }
-            }
-        } catch (e) {
-            // CORS blocked or network error — try next method
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // ATTEMPT 2: no-cors fetch (bypasses CORS, uses user's IP)
-        // ═══════════════════════════════════════════════════════════
-        try {
-            const response = await fetch(audioUrl, { method: 'GET', mode: 'no-cors', redirect: 'follow' });
-            const blob = await response.blob();
-            const blobUrl = URL.createObjectURL(blob);
-
-            // Validate: load into hidden audio element to confirm it's real audio
-            try {
-                await validateAudioBlob(blobUrl);
-                
-                // CONFIRMED REAL AUDIO — download it
-                const a = document.createElement('a');
-                a.href = blobUrl;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-                
-                window.markTrackDownloaded(track.videoId);
-                document.getElementById('track-options-modal').classList.remove('active');
-                btnElement.innerHTML = originalHTML;
-                btnElement.disabled = false;
-                return;
-            } catch (validationErr) {
-                // Not valid audio (probably error page) — clean up and try next instance
-                URL.revokeObjectURL(blobUrl);
-            }
-        } catch (e) {
-            // Network failure on this instance — continue to next
-        }
-
-        // Only try the primary URL once; after that construct from each instance
-        if (primaryUrl) primaryUrl = null;
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // FALLBACK: Worker proxy (if client is completely blocked)
-    // ═══════════════════════════════════════════════════════════
     try {
-        const lastAttempt = instances[startIdx];
-        const fallbackUrl = `${lastAttempt}/latest_version?id=${track.videoId}&itag=140&local=true`;
-        const proxyUrl = `https://octavecd9.bdra77367.workers.dev/?url=${encodeURIComponent(fallbackUrl)}`;
-        
-        const response = await fetch(proxyUrl, { method: 'GET' });
-        if (!response.ok) throw new Error(`Worker proxy failed: ${response.status}`);
-        
-        const blob = await response.blob();
-        if (blob.size < 30000) throw new Error("Worker returned invalid file");
+        // Send a POST request to your secure proxy
+        const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
+            method: 'POST',
+            headers: { 
+                'Accept': 'application/json',
+                'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ videoId: track.videoId })
+        });
 
-        const blobUrl = URL.createObjectURL(blob);
+        if (!response.ok) {
+            throw new Error("Worker proxy rejected the request.");
+        }
+
+        const data = await response.json();
+        
+        if (!data.url) throw new Error("No download URL returned from proxy.");
+        
+        // Use the pristine audio URL handed back from Apify
         const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = filename;
+        a.href = data.url;
+        a.target = '_blank';
+        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
-    } catch (err) {
-        console.error('Download failed:', err);
-        alert("Download failed: All audio sources are unavailable. The track may be region-blocked or the extraction nodes are down.");
+        
+    } catch (error) {
+        console.error("Extraction Error:", error);
+        alert("Download failed. Make sure your Cloudflare Worker is active and Apify credits are available.");
     } finally {
         btnElement.innerHTML = originalHTML;
-        btnElement.disabled = false;
+        btnElement.style.pointerEvents = 'auto';
     }
 };
 
