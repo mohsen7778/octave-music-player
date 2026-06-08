@@ -797,7 +797,8 @@ window.isTrackDownloaded = (videoId) => {
     return !!dls[videoId];
 };
 
-window.downloadTrack = (track, btnElement) => {
+// === NEW: Robust fetch-to-blob download ===
+window.downloadTrack = async (track, btnElement) => {
     if (!track) return;
     
     if (window.isTrackDownloaded(track.videoId)) {
@@ -806,25 +807,50 @@ window.downloadTrack = (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Starting...</span>';
-    
-    // 1. Point directly to your new custom proxy
-    const proxyUrl = `https://octavecd9.bdra77367.workers.dev/?id=${track.videoId}`;
-    
-    // 2. Since the proxy forces the "attachment" header, the browser handles the download natively
-    const a = document.createElement('a');
-    a.href = proxyUrl;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    
-    // 3. Mark as downloaded and close the menu
-    window.markTrackDownloaded(track.videoId);
-    document.getElementById('track-options-modal').classList.remove('active');
-    
-    setTimeout(() => {
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
+    btnElement.disabled = true;
+
+    try {
+        const proxyUrl = `https://octavecd9.bdra77367.workers.dev/?id=${track.videoId}`;
+        
+        // Fetch the audio through the proxy as a Blob
+        const response = await fetch(proxyUrl, { method: 'GET' });
+        
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+        }
+        
+        const blob = await response.blob();
+        
+        // Safety check: if the blob is tiny, it's probably an error page, not audio
+        if (blob.size < 1024) {
+            throw new Error("Received empty or invalid audio file.");
+        }
+
+        // Create a same-origin Blob URL so the browser actually saves the file
+        const blobUrl = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `Octave_Track_${track.videoId}.m4a`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        // Clean up the blob URL after a short delay
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        
+        // Only mark as downloaded after confirmed success
+        window.markTrackDownloaded(track.videoId);
+        document.getElementById('track-options-modal').classList.remove('active');
+        
+    } catch (err) {
+        console.error('Download failed:', err);
+        alert("Download failed. The audio node may be down or the track is unavailable. Please try again.");
+    } finally {
         btnElement.innerHTML = originalHTML;
-    }, 1500);
+        btnElement.disabled = false;
+    }
 };
 
 document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
