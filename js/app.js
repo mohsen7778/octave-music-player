@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (INVIDIOUS BLOB DOWNLOADER)
+// app.js — Octave Full Flagship Engine (CUSTOM PROXY INTEGRATION)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -777,29 +777,13 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- MULTI-ENGINE DOWNLOAD SYSTEM ---
-// Root cause of all previous failures: YouTube CDN and Invidious /videoplayback
-// both lack CORS headers, so browser blocks any fetch() of stream bytes.
-// Fix: wrap the stream URL with corsproxy.io which adds Access-Control-Allow-Origin: *.
-//
-// Waterfall:
-//   1. Piped API  → stream URL → corsproxy.io wrapper → Blob fetch
-//   2. Invidious  → ?local=true proxied URL → corsproxy.io wrapper → Blob fetch
-//   3. New tab    → absolute last resort
-
-const PIPED_INSTANCES = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.tokhmi.xyz',
-    'https://pipedapi.moomoo.me',
-    'https://api.piped.yt',
-    'https://pipedapi.syncpundit.io',
-    'https://piped-api.garudalinux.org',
-    'https://api.piped.projectsegfau.lt'
-];
-
+// --- CLOUDFLARE WORKER DOWNLOAD ENGINE ---
 window.getDownloadedTracks = () => {
-    try { return JSON.parse(localStorage.getItem('octave_downloads')) || {}; }
-    catch (e) { return {}; }
+    try {
+        return JSON.parse(localStorage.getItem('octave_downloads')) || {};
+    } catch (e) {
+        return {};
+    }
 };
 
 window.markTrackDownloaded = (videoId) => {
@@ -808,143 +792,61 @@ window.markTrackDownloaded = (videoId) => {
     localStorage.setItem('octave_downloads', JSON.stringify(dls));
 };
 
-window.isTrackDownloaded = (videoId) => !!window.getDownloadedTracks()[videoId];
-
-function corsWrap(url) {
-    return `https://corsproxy.io/?${encodeURIComponent(url)}`;
-}
-
-async function tryBlobDownload(streamUrl, filename) {
-    const res = await fetch(corsWrap(streamUrl));
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objectUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-}
+window.isTrackDownloaded = (videoId) => {
+    const dls = window.getDownloadedTracks();
+    return !!dls[videoId];
+};
 
 window.downloadTrack = async (track, btnElement) => {
     if (!track) return;
-
+    
     if (window.isTrackDownloaded(track.videoId)) {
-        alert("Already downloaded this track!");
+        alert("You have already downloaded this track!");
         return;
     }
 
     const originalHTML = btnElement.innerHTML;
-    const setStatus = (icon, label) => {
-        btnElement.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${label}</span>`;
-        btnElement.style.pointerEvents = 'none';
-    };
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
+    btnElement.style.pointerEvents = 'none';
 
-    const safeName = (ext) =>
-        `${track.author.replace(/[\\/:*?"<>|]/g, '').trim()} - ${track.title.replace(/[\\/:*?"<>|]/g, '').trim()}.${ext}`;
-
-    setStatus('fa-spinner fa-spin', 'Fetching...');
-
-    // ── STRATEGY 1: Piped API ────────────────────────────────────────────────
-    for (const pipedBase of PIPED_INSTANCES) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-        try {
-            const res = await fetch(`${pipedBase}/streams/${track.videoId}`, { signal: controller.signal });
-            clearTimeout(timeout);
-            if (!res.ok) continue;
-
-            const data = await res.json();
-            const streams = (data.audioStreams || []).sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-            if (!streams.length) continue;
-
-            const best = streams[0];
-            const mime = best.mimeType || '';
-            let ext = 'webm';
-            if (mime.includes('mp4') || mime.includes('m4a')) ext = 'm4a';
-            else if (mime.includes('ogg') || mime.includes('opus')) ext = 'ogg';
-
-            setStatus('fa-spinner fa-spin', 'Downloading...');
-            await tryBlobDownload(best.url, safeName(ext));
-
-            window.markTrackDownloaded(track.videoId);
-            document.getElementById('track-options-modal').classList.remove('active');
-            btnElement.innerHTML = originalHTML;
-            btnElement.style.pointerEvents = 'auto';
-            return;
-
-        } catch (err) {
-            clearTimeout(timeout);
-            continue;
-        }
-    }
-
-    // ── STRATEGY 2: Invidious ?local=true ───────────────────────────────────
-    // ?local=true makes adaptiveFormats[].url point to the Invidious instance
-    // domain (/videoplayback) rather than googlevideo.com. Still needs the
-    // corsproxy wrapper since /videoplayback lacks CORS headers.
-    setStatus('fa-spinner fa-spin', 'Trying fallback...');
-    const invInstances = window.INVIDIOUS || [];
-
-    for (let i = 0; i < invInstances.length; i++) {
-        const base = invInstances[(window.invIdx + i) % invInstances.length];
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 7000);
-        try {
-            const res = await fetch(`${base}/api/v1/videos/${track.videoId}?local=true`, { signal: controller.signal });
-            clearTimeout(timeout);
-            if (!res.ok) continue;
-
-            const data = await res.json();
-            const formats = (data.adaptiveFormats || [])
-                .filter(f => f.type && f.type.startsWith('audio/'))
-                .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
-            if (!formats.length) continue;
-
-            const best = formats[0];
-            const mime = best.type.split(';')[0];
-            let ext = 'webm';
-            if (mime.includes('mp4') || mime.includes('m4a')) ext = 'm4a';
-            else if (mime.includes('ogg') || mime.includes('opus')) ext = 'ogg';
-
-            setStatus('fa-spinner fa-spin', 'Downloading...');
-            await tryBlobDownload(best.url, safeName(ext));
-
-            window.markTrackDownloaded(track.videoId);
-            document.getElementById('track-options-modal').classList.remove('active');
-            btnElement.innerHTML = originalHTML;
-            btnElement.style.pointerEvents = 'auto';
-            return;
-
-        } catch (err) {
-            clearTimeout(timeout);
-            continue;
-        }
-    }
-
-    // ── STRATEGY 3: New tab last resort ─────────────────────────────────────
     try {
-        const base = invInstances[window.invIdx % invInstances.length];
-        const res = await fetch(`${base}/api/v1/videos/${track.videoId}?local=true`);
-        const data = await res.json();
-        const formats = (data.adaptiveFormats || [])
-            .filter(f => f.type && f.type.startsWith('audio/'))
-            .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
-        if (formats.length > 0) {
-            window.open(formats[0].url, '_blank');
-            alert("Opened audio in a new tab. Use your browser's save option.");
-            document.getElementById('track-options-modal').classList.remove('active');
-        } else {
-            alert("Download failed: no audio stream found.");
-        }
-    } catch (e) {
-        alert("Download failed: all engines exhausted.");
-    }
+        // Using your dedicated Cloudflare Worker Proxy
+        const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
+            method: 'POST',
+            headers: { 
+                'Accept': 'application/json',
+                'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ videoId: track.videoId })
+        });
 
-    btnElement.innerHTML = originalHTML;
-    btnElement.style.pointerEvents = 'auto';
+        if (!response.ok) {
+            throw new Error("Worker rejected the request.");
+        }
+
+        const data = await response.json();
+        
+        if (!data.url) throw new Error("No download URL returned from proxy.");
+        
+        // The clean, CORS-free download link sent back from your proxy
+        const a = document.createElement('a');
+        a.href = data.url;
+        a.target = '_blank';
+        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        window.markTrackDownloaded(track.videoId);
+        document.getElementById('track-options-modal').classList.remove('active');
+
+    } catch (error) {
+        console.error("Extraction Error:", error);
+        alert("Download failed. Make sure your Cloudflare Worker is fully active.");
+    } finally {
+        btnElement.innerHTML = originalHTML;
+        btnElement.style.pointerEvents = 'auto';
+    }
 };
 
 document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
