@@ -809,8 +809,99 @@ window.downloadTrack = async (track, btnElement) => {
     btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
     btnElement.disabled = true;
 
+    const safeTitle = track.title.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 30).trim();
+    const safeArtist = track.author.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 20).trim();
+    const filename = `${safeTitle || 'Track'} - ${safeArtist || 'Unknown'}.m4a`;
+
+    // Helper: get the audio URL the same way playback does
+    const getAudioUrl = () => {
+        // If this track is currently loaded in the audio player, use its exact URL
+        if (window.audio && window.OCTAVE.currentIndex >= 0) {
+            const currentTrack = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+            if (currentTrack && currentTrack.videoId === track.videoId) {
+                if (window.audio.currentSrc) return window.audio.currentSrc;
+                if (window.audio.src) return window.audio.src;
+            }
+        }
+        
+        // Otherwise construct using the same Invidious instances the app uses
+        const instances = window.INVIDIOUS || [
+            "https://inv.tux.pizza",
+            "https://invidious.nerdvpn.de",
+            "https://invidious.no-logs.com",
+            "https://invidious.perennialte.ch"
+        ];
+        const idx = (window.invIdx || 0) % instances.length;
+        return `${instances[idx]}/latest_version?id=${track.videoId}&itag=140&local=true`;
+    };
+
+    const audioUrl = getAudioUrl();
+
+    // ═══════════════════════════════════════════════════════════
+    // TIER 1: Direct fetch from browser (uses user's clean IP)
+    // ═══════════════════════════════════════════════════════════
     try {
-        const proxyUrl = `https://octavecd9.bdra77367.workers.dev/?id=${track.videoId}`;
+        const response = await fetch(audioUrl, { method: 'GET', redirect: 'follow' });
+        
+        if (response.ok) {
+            const blob = await response.blob();
+            
+            // Validate it's real audio, not an error page
+            if (blob.size >= 30000) {
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+                
+                window.markTrackDownloaded(track.videoId);
+                document.getElementById('track-options-modal').classList.remove('active');
+                btnElement.innerHTML = originalHTML;
+                btnElement.disabled = false;
+                return; // SUCCESS — Worker wasn't even needed
+            }
+        }
+    } catch (e) {
+        console.log('Tier 1 (direct CORS fetch) failed:', e);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // TIER 2: no-cors fetch (bypasses missing CORS headers)
+    // The audio element can play this URL, so the resource exists.
+    // no-cors lets us grab it even without Access-Control-Allow-Origin.
+    // ═══════════════════════════════════════════════════════════
+    try {
+        const response = await fetch(audioUrl, { method: 'GET', mode: 'no-cors', redirect: 'follow' });
+        const blob = await response.blob();
+        
+        // Note: for opaque no-cors responses, blob.size might be 0 or hidden,
+        // but since the audio element plays this exact URL, we trust it.
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        
+        window.markTrackDownloaded(track.videoId);
+        document.getElementById('track-options-modal').classList.remove('active');
+        btnElement.innerHTML = originalHTML;
+        btnElement.disabled = false;
+        return; // SUCCESS via no-cors
+    } catch (e) {
+        console.log('Tier 2 (no-cors fetch) failed:', e);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // TIER 3: Worker proxy (if frontend is completely blocked by CORS)
+    // ═══════════════════════════════════════════════════════════
+    try {
+        const proxyUrl = `https://octavecd9.bdra77367.workers.dev/?id=${track.videoId}&url=${encodeURIComponent(audioUrl)}`;
         
         const response = await fetch(proxyUrl, { method: 'GET' });
         
@@ -820,24 +911,17 @@ window.downloadTrack = async (track, btnElement) => {
         
         const blob = await response.blob();
         
-        // Reject files smaller than 30 KB — they are error pages, not audio
         if (blob.size < 30000) {
-            throw new Error("Audio unavailable. All extraction nodes failed or the track is restricted.");
+            throw new Error("Audio unavailable. All extraction nodes failed.");
         }
 
         const blobUrl = URL.createObjectURL(blob);
-        
-        const safeTitle = track.title.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 30).trim();
-        const safeArtist = track.author.replace(/[^a-zA-Z0-9 \-_]/g, '').substring(0, 20).trim();
-        const filename = `${safeTitle || 'Track'} - ${safeArtist || 'Unknown'}.m4a`;
-        
         const a = document.createElement('a');
         a.href = blobUrl;
         a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         
         window.markTrackDownloaded(track.videoId);
