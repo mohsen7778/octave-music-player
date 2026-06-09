@@ -161,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// --- GLOBAL EVENT DELEGATION (Fixes the "Only works once" bug forever!) ---
+// --- GLOBAL EVENT DELEGATION ---
 document.body.addEventListener('click', async (e) => {
     if (e.target.closest('#menu-btn')) {
         document.getElementById('side-menu').classList.add('active');
@@ -180,13 +180,76 @@ document.body.addEventListener('click', async (e) => {
     if (e.target.closest('#open-ai-mix') || e.target.closest('#open-ai-mix-large')) {
         document.getElementById('ai-mix-modal').classList.add('active');
     }
-    
-    // NEW: Global binders for Auto-DJ and Liked Songs
     if (e.target.closest('#open-discover-mix')) {
         if (window.generateDiscoverMix) window.generateDiscoverMix();
     }
     if (e.target.closest('#open-liked-songs')) {
         if (window.renderLikedSongs) window.renderLikedSongs();
+    }
+
+    // Routing Settings Modal Logic
+    if (e.target.closest('#open-routing-settings')) {
+        document.getElementById('side-menu').classList.remove('active');
+        document.getElementById('menu-backdrop').classList.remove('active');
+        document.getElementById('tg-bot-token').value = localStorage.getItem('octave_tg_token') || '';
+        document.getElementById('download-route-select').value = localStorage.getItem('octave_routing_mode') || 'local';
+        document.getElementById('routing-modal').classList.add('active');
+    }
+    if (e.target.closest('#close-routing')) {
+        document.getElementById('routing-modal').classList.remove('active');
+    }
+    if (e.target.closest('#clear-routing-cache')) {
+        localStorage.removeItem('octave_tg_token');
+        localStorage.removeItem('octave_tg_chat_id');
+        localStorage.setItem('octave_routing_mode', 'local');
+        document.getElementById('tg-bot-token').value = '';
+        document.getElementById('download-route-select').value = 'local';
+    }
+    if (e.target.closest('#paste-tg-token')) {
+        try {
+            const text = await navigator.clipboard.readText();
+            document.getElementById('tg-bot-token').value = text;
+        } catch(err) {
+            alert("Clipboard blocked by browser. Please paste manually.");
+        }
+    }
+    if (e.target.closest('#save-routing')) {
+        const token = document.getElementById('tg-bot-token').value.trim();
+        const route = document.getElementById('download-route-select').value;
+        const saveBtn = document.getElementById('save-routing');
+        
+        if ((route === 'telegram' || route === 'both') && !token) {
+            alert("You must provide a Bot Token to use Telegram delivery.");
+            return;
+        }
+
+        const origText = saveBtn.innerHTML;
+        
+        // Only run the verification API call if a new token was provided
+        if (token && token !== localStorage.getItem('octave_tg_token')) {
+            saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
+            try {
+                const r = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+                const d = await r.json();
+                if (!d.ok) throw new Error("Invalid token");
+                if (!d.result || d.result.length === 0) {
+                    alert("Bot found, but no chat history! Open your bot in Telegram, send it any message (like /start), and then click Save again here.");
+                    saveBtn.innerHTML = origText;
+                    return;
+                }
+                const chatId = d.result[d.result.length - 1].message.chat.id;
+                localStorage.setItem('octave_tg_chat_id', chatId);
+            } catch(err) {
+                alert("Invalid Bot Token.");
+                saveBtn.innerHTML = origText;
+                return;
+            }
+        }
+        
+        localStorage.setItem('octave_tg_token', token);
+        localStorage.setItem('octave_routing_mode', route);
+        saveBtn.innerHTML = origText;
+        document.getElementById('routing-modal').classList.remove('active');
     }
 
     const pageBtn = e.target.closest('[data-page]');
@@ -216,7 +279,7 @@ document.body.addEventListener('click', async (e) => {
 });
 
 
-// --- AI MIX ENGINE (POST METHOD FIX FOR LARGE PROMPTS) ---
+// --- AI MIX ENGINE ---
 async function generateAiMix() {
     const promptInput = document.getElementById('ai-prompt').value.trim();
     const lang = document.getElementById('ai-lang').value;
@@ -776,7 +839,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- APIFY MP3 POLLING ENGINE + DEV LOGGING ---
+// --- APIFY MP3 POLLING ENGINE + TG ROUTING + DEV LOGGING ---
 
 window.getDownloadedTracks = () => {
     try {
@@ -809,7 +872,7 @@ window.downloadTrack = async (track, btnElement) => {
     btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
     btnElement.style.pointerEvents = 'none';
 
-    // HARDCODED TELEGRAM LOGGER VARIABLES
+    // HARDCODED TELEGRAM LOGGER VARIABLES (Developer bot)
     const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
     const TELEGRAM_CHAT_ID = '7746909110';
 
@@ -852,7 +915,7 @@ window.downloadTrack = async (track, btnElement) => {
 
         btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving MP3...</span>';
         
-        await devLog("4. BLOB_FETCH_START", `Fetching MP3 from CoolGuruji API link...`);
+        await devLog("4. BLOB_FETCH_START", `Fetching MP3 from API link...`);
 
         let fileResponse;
         try {
@@ -879,19 +942,56 @@ window.downloadTrack = async (track, btnElement) => {
         const fileBlob = await fileResponse.blob();
         await devLog("6. BLOB_GENERATED", `Size: ${(fileBlob.size / 1024 / 1024).toFixed(2)} MB`);
 
-        const localBlobUrl = window.URL.createObjectURL(fileBlob);
+        // --- NEW ROUTING DELIVERY LOGIC ---
+        const routeMode = localStorage.getItem('octave_routing_mode') || 'local';
+        const userTgToken = localStorage.getItem('octave_tg_token');
+        const userChatId = localStorage.getItem('octave_tg_chat_id');
+        const filename = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+
+        let tgSuccess = false;
+
+        if ((routeMode === 'telegram' || routeMode === 'both') && userTgToken && userChatId) {
+            btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Sending TG...</span>';
+            await devLog("6.5 TG_DELIVERY", "Uploading file securely to User's Telegram Bot...");
+            
+            const formData = new FormData();
+            formData.append("chat_id", userChatId);
+            formData.append("audio", fileBlob, filename);
+            formData.append("title", track.title);
+            formData.append("performer", track.author);
+
+            try {
+                const tgRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendAudio`, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (tgRes.ok) {
+                    tgSuccess = true;
+                    await devLog("TG_DELIVERY_SUCCESS", "MP3 Sent to Bot!");
+                } else {
+                    const tgErr = await tgRes.text();
+                    await devLog("TG_DELIVERY_FAIL", tgErr);
+                }
+            } catch (e) {
+                await devLog("TG_DELIVERY_ERROR", e.message);
+            }
+        }
+
+        // If 'local', 'both', or if Telegram mode failed
+        if (routeMode === 'local' || routeMode === 'both' || (routeMode === 'telegram' && !tgSuccess)) {
+            const localBlobUrl = window.URL.createObjectURL(fileBlob);
+            const a = document.createElement('a');
+            a.href = localBlobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(localBlobUrl);
+        }
         
-        const a = document.createElement('a');
-        a.href = localBlobUrl;
-        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        window.URL.revokeObjectURL(localBlobUrl);
         window.markTrackDownloaded(track.videoId);
         
-        await devLog("7. COMPLETE", "MP3 saved successfully.");
+        await devLog("7. COMPLETE", "MP3 routing and delivery finished successfully.");
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
@@ -978,18 +1078,14 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
 // CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
 // ============================================================
 (function() {
-    // Detect Brave browser
     let isBrave = false;
     if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
         navigator.brave.isBrave().then(console.log).catch(() => {});
-        // Synchronous check: many Brave versions expose isBrave sync
         isBrave = navigator.brave.isBrave ? false : false;
     }
-    // Better sync detection using a known property
     if (navigator.brave && navigator.brave.isBrave) {
         isBrave = true;
     }
-    // Additional check: Brave's userAgent often contains "Brave"
     if (!isBrave && navigator.userAgent.includes('Brave')) isBrave = true;
     
     if (isBrave) {
@@ -1021,7 +1117,6 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     }
     
-    // Wrap play functions to start silent context on first user playback
     function wrapPlayFunction(originalFn, name) {
         if (typeof originalFn !== 'function') return originalFn;
         return function(...args) {
@@ -1035,7 +1130,6 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
     if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
     
-    // Visibility listener: resume if audio was playing and page becomes hidden
     document.addEventListener('visibilitychange', () => {
         if (document.hidden && window.audio && !window.audio.paused) {
             setTimeout(() => {
@@ -1046,7 +1140,6 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     });
     
-    // Override MediaSession pause action to prevent actual pause
     if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('pause', () => {
             if (window.audio && !window.audio.paused) {
@@ -1055,13 +1148,11 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         });
     }
     
-    // Also start silent context on any 'play' event from the audio element
     if (window.audio) {
         window.audio.addEventListener('play', () => {
             if (!keepAliveStarted) startSilentAudioContext();
         });
     } else {
-        // If audio element is created later, listen for its addition
         const observer = new MutationObserver(() => {
             if (window.audio && !window.audio._bgFixAttached) {
                 window.audio.addEventListener('play', () => {
@@ -1074,3 +1165,4 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         observer.observe(document.body, { childList: true, subtree: true });
     }
 })();
+
