@@ -265,33 +265,70 @@
             </div>
         </div>
 
-        <div class="modal-overlay" id="routing-modal">
-            <div class="modal-content glass-panel shadow-heavy">
-                <h3 style="margin-bottom: 16px;">Download Routing</h3>
+        <div id="routing-panel" class="full-overlay-panel">
+            <div class="panel-header">
+                <h2>Download Routing</h2>
+                <button class="icon-btn" id="close-routing-panel"><i class="fa-solid fa-chevron-down"></i></button>
+            </div>
+            <div class="scroll-y" style="padding: 20px; padding-bottom: 100px;">
                 
-                <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 12px; line-height: 1.5;">
-                    <strong>1.</strong> Go to <a href="https://t.me/botfather" target="_blank" style="color: var(--accent); text-decoration: none;">@BotFather</a> on Telegram.<br>
-                    <strong>2.</strong> Send <code>/newbot</code> and follow his instructions.<br>
-                    <strong>3.</strong> Copy your HTTP API Token and paste it below.
-                </p>
-
-                <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-                    <input type="text" id="tg-bot-token" class="modern-input" placeholder="Paste Bot Token here..." autocomplete="off">
-                    <button class="btn-secondary" id="paste-tg-token" style="padding: 0 16px; flex-shrink: 0;"><i class="fa-solid fa-paste"></i></button>
+                <div class="glass-panel" style="padding: 16px; margin-bottom: 24px; border-radius: 12px; border: 1px solid var(--glass-border);">
+                    <h3 style="margin-bottom: 12px; color: var(--accent); font-size: 16px;"><i class="fa-brands fa-telegram"></i> Step 1: Create Your Bot</h3>
+                    <ol style="color: var(--text-secondary); font-size: 14px; margin-left: 16px; line-height: 1.6; padding-left: 8px;">
+                        <li style="margin-bottom: 6px;">Open <a href="https://t.me/botfather" target="_blank" style="color: var(--accent); text-decoration: none; font-weight: bold;">@BotFather</a> in Telegram.</li>
+                        <li style="margin-bottom: 6px;">Send the command <code style="background: var(--bg-deep); padding: 2px 6px; border-radius: 4px;">/newbot</code> and pick a name.</li>
+                        <li style="margin-bottom: 6px;">Copy the <b>HTTP API Token</b> he gives you.</li>
+                        <li style="margin-bottom: 6px; color: #ff5000;"><b>CRITICAL:</b> Search for your new bot in Telegram and press <b>Start</b>.</li>
+                    </ol>
                 </div>
 
-                <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;">Select Download Destination:</p>
-                <select id="download-route-select" class="modern-input" style="margin-bottom: 24px; appearance: none;">
-                    <option value="local">Device Storage Only</option>
-                    <option value="telegram">Telegram Bot Only</option>
-                    <option value="both">Both (Device + Telegram)</option>
-                </select>
-
-                <div class="modal-actions">
-                    <button class="btn-secondary" id="clear-routing-cache" style="color: #ff4444; flex: 0.5;">Clear</button>
-                    <button class="btn-secondary" id="close-routing">Cancel</button>
-                    <button class="btn-primary" id="save-routing" style="color: var(--bg-deep);">Save</button>
+                <div style="margin-bottom: 24px;">
+                    <label style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; display: block;">Bot Token</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="tg-bot-token" class="modern-input" placeholder="Paste Token here..." autocomplete="off">
+                        <button class="btn-secondary" id="paste-tg-token" style="padding: 0 16px;"><i class="fa-solid fa-paste"></i></button>
+                    </div>
                 </div>
+
+                <div style="margin-bottom: 32px;">
+                    <label style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; display: block;">Your Chat ID (Auto-captured or Manual)</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="tg-chat-id" class="modern-input" placeholder="e.g. 7746909110" autocomplete="off">
+                        <button class="btn-secondary" id="fetch-chat-id" style="padding: 0 16px; white-space: nowrap;"><i class="fa-solid fa-radar"></i> Auto-Find</button>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px; line-height: 1.5;">If Auto-Find fails, grab your ID instantly from <a href="https://t.me/userinfobot" target="_blank" style="color: var(--accent); text-decoration: none; font-weight: bold;">@userinfobot</a> and type it here.</div>
+                </div>
+
+                <h3 style="margin-bottom: 12px; font-size: 16px;">Step 2: Choose Destination</h3>
+                <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 32px;">
+                    <div class="route-card active" data-val="local">
+                        <i class="fa-solid fa-mobile-screen"></i>
+                        <div>
+                            <div class="rc-title">Device Storage Only</div>
+                            <div class="rc-sub">Saves directly to your phone/PC</div>
+                        </div>
+                    </div>
+                    <div class="route-card" data-val="telegram">
+                        <i class="fa-brands fa-telegram"></i>
+                        <div>
+                            <div class="rc-title">Telegram Bot Only</div>
+                            <div class="rc-sub">Fires MP3s cleanly into your Bot chat</div>
+                        </div>
+                    </div>
+                    <div class="route-card" data-val="both">
+                        <i class="fa-solid fa-arrows-split-up-and-left"></i>
+                        <div>
+                            <div class="rc-title">Dual Delivery</div>
+                            <div class="rc-sub">Saves to Device + Sends to Telegram</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 12px;">
+                    <button class="btn-primary" id="save-routing" style="flex: 1; color: var(--bg-deep); font-size: 16px;"><i class="fa-solid fa-link"></i> Connect & Save</button>
+                    <button class="btn-secondary" id="clear-routing-cache" style="color: #ff4444; width: 60px;"><i class="fa-solid fa-trash"></i></button>
+                </div>
+
             </div>
         </div>
 
