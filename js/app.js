@@ -1003,7 +1003,6 @@ window.downloadTrack = async (track, btnElement) => {
         } catch (networkError) {
             await devLog("5. BLOB_FETCH_NETWORK_ERROR", `CORS block detected. Triggering native fallback.`);
             
-            // CORS BYPASS FALLBACK
             const a = document.createElement('a');
             a.href = targetUrl;
             a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
@@ -1034,26 +1033,54 @@ window.downloadTrack = async (track, btnElement) => {
             btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Sending TG...</span>';
             await devLog("6.5 TG_DELIVERY", "Uploading file securely to User's Telegram Bot...");
             
+            // STRICT CASTING: Telegram is extremely picky about raw blobs. We must explicitly construct a 'File' object with the exact audio/mpeg MIME type.
+            const audioFile = new File([fileBlob], filename, { type: 'audio/mpeg' });
+            
             const formData = new FormData();
             formData.append("chat_id", userChatId);
-            formData.append("audio", fileBlob, filename);
+            formData.append("audio", audioFile);
             formData.append("title", track.title);
             formData.append("performer", track.author);
 
             try {
+                // Attempt 1: Standard sendAudio
                 const tgRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendAudio`, {
                     method: 'POST',
                     body: formData
                 });
+                
                 if (tgRes.ok) {
                     tgSuccess = true;
-                    await devLog("TG_DELIVERY_SUCCESS", "MP3 Sent to Bot!");
+                    await devLog("TG_DELIVERY_SUCCESS", "MP3 Sent to Bot via sendAudio!");
                 } else {
                     const tgErr = await tgRes.text();
-                    await devLog("TG_DELIVERY_FAIL", tgErr);
+                    await devLog("TG_DELIVERY_FAIL_AUDIO", tgErr);
+                    
+                    // Attempt 2: sendDocument Fallback 
+                    // If Telegram rejects sendAudio due to strict MP3 encoding checks, sendDocument forces it through as a raw file.
+                    await devLog("TG_DELIVERY_RETRY", "Trying sendDocument fallback...");
+                    
+                    const docFormData = new FormData();
+                    docFormData.append("chat_id", userChatId);
+                    docFormData.append("document", audioFile);
+                    
+                    const tgDocRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendDocument`, {
+                        method: 'POST',
+                        body: docFormData
+                    });
+                    
+                    if (tgDocRes.ok) {
+                        tgSuccess = true;
+                        await devLog("TG_DELIVERY_SUCCESS_DOC", "MP3 Sent to Bot as raw Document!");
+                    } else {
+                        const tgDocErr = await tgDocRes.text();
+                        await devLog("TG_DELIVERY_FAIL_DOC", tgDocErr);
+                        throw new Error("Telegram rejected both sendAudio and sendDocument.");
+                    }
                 }
             } catch (e) {
                 await devLog("TG_DELIVERY_ERROR", e.message);
+                console.error("Telegram Upload Error:", e);
             }
         }
 
