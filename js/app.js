@@ -187,24 +187,45 @@ document.body.addEventListener('click', async (e) => {
         if (window.renderLikedSongs) window.renderLikedSongs();
     }
 
-    // Routing Settings Modal Logic
+    // --- FULL SCREEN ROUTING UI HANDLING ---
     if (e.target.closest('#open-routing-settings')) {
         document.getElementById('side-menu').classList.remove('active');
         document.getElementById('menu-backdrop').classList.remove('active');
-        document.getElementById('tg-bot-token').value = localStorage.getItem('octave_tg_token') || '';
-        document.getElementById('download-route-select').value = localStorage.getItem('octave_routing_mode') || 'local';
-        document.getElementById('routing-modal').classList.add('active');
+
+        // Mask Token for visual display if it exists
+        const savedToken = localStorage.getItem('octave_tg_token');
+        if (savedToken) {
+            const parts = savedToken.split(':');
+            if (parts.length === 2) {
+                document.getElementById('tg-bot-token').value = parts[0].substring(0, 4) + '********:AA************' + parts[1].substring(parts[1].length - 10);
+            } else {
+                document.getElementById('tg-bot-token').value = savedToken;
+            }
+        } else {
+            document.getElementById('tg-bot-token').value = '';
+        }
+
+        document.getElementById('tg-chat-id').value = localStorage.getItem('octave_tg_chat_id') || '';
+
+        // Select the right route card based on saved settings
+        const currentRoute = localStorage.getItem('octave_routing_mode') || 'local';
+        document.querySelectorAll('.route-card').forEach(c => {
+            c.classList.remove('active');
+            if (c.getAttribute('data-val') === currentRoute) c.classList.add('active');
+        });
+
+        document.getElementById('routing-panel').classList.add('active');
     }
-    if (e.target.closest('#close-routing')) {
-        document.getElementById('routing-modal').classList.remove('active');
+    
+    if (e.target.closest('#close-routing-panel')) {
+        document.getElementById('routing-panel').classList.remove('active');
     }
-    if (e.target.closest('#clear-routing-cache')) {
-        localStorage.removeItem('octave_tg_token');
-        localStorage.removeItem('octave_tg_chat_id');
-        localStorage.setItem('octave_routing_mode', 'local');
-        document.getElementById('tg-bot-token').value = '';
-        document.getElementById('download-route-select').value = 'local';
+
+    if (e.target.closest('.route-card')) {
+        document.querySelectorAll('.route-card').forEach(c => c.classList.remove('active'));
+        e.target.closest('.route-card').classList.add('active');
     }
+
     if (e.target.closest('#paste-tg-token')) {
         try {
             const text = await navigator.clipboard.readText();
@@ -213,44 +234,103 @@ document.body.addEventListener('click', async (e) => {
             alert("Clipboard blocked by browser. Please paste manually.");
         }
     }
-    if (e.target.closest('#save-routing')) {
-        const token = document.getElementById('tg-bot-token').value.trim();
-        const route = document.getElementById('download-route-select').value;
-        const saveBtn = document.getElementById('save-routing');
+
+    if (e.target.closest('#fetch-chat-id')) {
+        const btn = e.target.closest('#fetch-chat-id');
+        let tokenInput = document.getElementById('tg-bot-token').value.trim();
         
-        if ((route === 'telegram' || route === 'both') && !token) {
-            alert("You must provide a Bot Token to use Telegram delivery.");
+        // Use real token if input is still masked
+        if (tokenInput.includes('********')) tokenInput = localStorage.getItem('octave_tg_token');
+
+        if (!tokenInput) {
+            alert("Please paste your Bot Token first!");
             return;
         }
 
-        const origText = saveBtn.innerHTML;
-        
-        // Only run the verification API call if a new token was provided
-        if (token && token !== localStorage.getItem('octave_tg_token')) {
-            saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
-            try {
-                const r = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
-                const d = await r.json();
-                if (!d.ok) throw new Error("Invalid token");
-                if (!d.result || d.result.length === 0) {
-                    alert("Bot found, but no chat history! Open your bot in Telegram, send it any message (like /start), and then click Save again here.");
-                    saveBtn.innerHTML = origText;
-                    return;
-                }
+        const origText = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        try {
+            const r = await fetch(`https://api.telegram.org/bot${tokenInput}/getUpdates`);
+            const d = await r.json();
+            if (!d.ok) throw new Error("Invalid token");
+            if (!d.result || d.result.length === 0) {
+                alert("No chat history found! CRITICAL: Make sure you searched for your new bot in Telegram and hit START first. Then try again here.");
+            } else {
                 const chatId = d.result[d.result.length - 1].message.chat.id;
-                localStorage.setItem('octave_tg_chat_id', chatId);
+                document.getElementById('tg-chat-id').value = chatId;
+            }
+        } catch(err) {
+            alert("Error: " + err.message);
+        } finally {
+            btn.innerHTML = origText;
+        }
+    }
+
+    if (e.target.closest('#save-routing')) {
+        const route = document.querySelector('.route-card.active').getAttribute('data-val');
+        let tokenInput = document.getElementById('tg-bot-token').value.trim();
+        let finalToken = tokenInput.includes('********') ? localStorage.getItem('octave_tg_token') : tokenInput;
+        const chatId = document.getElementById('tg-chat-id').value.trim();
+
+        if ((route === 'telegram' || route === 'both') && (!finalToken || !chatId)) {
+            alert("You must provide both your Bot Token and your Chat ID for Telegram delivery to work!");
+            return;
+        }
+
+        const btn = document.getElementById('save-routing');
+        const origText = btn.innerHTML;
+
+        if ((route === 'telegram' || route === 'both') && finalToken && chatId) {
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing Bot...';
+            try {
+                const r = await fetch(`https://api.telegram.org/bot${finalToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: "✅ *Octave Routing Engine*\nTelegram bot successfully connected! Downloaded songs will appear here.",
+                        parse_mode: "Markdown"
+                    })
+                });
+                const d = await r.json();
+                if (!d.ok) throw new Error(d.description);
+                alert("Settings Saved! Telegram Bot is successfully connected. A test message was sent to your bot.");
             } catch(err) {
-                alert("Invalid Bot Token.");
-                saveBtn.innerHTML = origText;
-                return;
+                alert("Settings saved, BUT failed to send test message to Telegram. Check your Bot Token and Chat ID. Error: " + err.message);
+            } finally {
+                btn.innerHTML = origText;
+            }
+        } else {
+            alert("Routing settings saved successfully (Local Delivery).");
+        }
+
+        localStorage.setItem('octave_tg_token', finalToken || '');
+        localStorage.setItem('octave_tg_chat_id', chatId || '');
+        localStorage.setItem('octave_routing_mode', route);
+
+        if (finalToken) {
+            const parts = finalToken.split(':');
+            if (parts.length === 2) {
+                document.getElementById('tg-bot-token').value = parts[0].substring(0, 4) + '********:AA************' + parts[1].substring(parts[1].length - 10);
             }
         }
-        
-        localStorage.setItem('octave_tg_token', token);
-        localStorage.setItem('octave_routing_mode', route);
-        saveBtn.innerHTML = origText;
-        document.getElementById('routing-modal').classList.remove('active');
+        document.getElementById('routing-panel').classList.remove('active');
     }
+
+    if (e.target.closest('#clear-routing-cache')) {
+        if(confirm("Clear all Telegram routing settings?")) {
+            localStorage.removeItem('octave_tg_token');
+            localStorage.removeItem('octave_tg_chat_id');
+            localStorage.setItem('octave_routing_mode', 'local');
+            document.getElementById('tg-bot-token').value = '';
+            document.getElementById('tg-chat-id').value = '';
+            document.querySelectorAll('.route-card').forEach(c => {
+                c.classList.remove('active');
+                if (c.getAttribute('data-val') === 'local') c.classList.add('active');
+            });
+        }
+    }
+    // --- END FULL SCREEN ROUTING UI HANDLING ---
 
     const pageBtn = e.target.closest('[data-page]');
     if (pageBtn) {
@@ -977,7 +1057,7 @@ window.downloadTrack = async (track, btnElement) => {
             }
         }
 
-        // If 'local', 'both', or if Telegram mode failed
+        // Always fallback to device storage if they requested local, both, OR if Telegram outright failed
         if (routeMode === 'local' || routeMode === 'both' || (routeMode === 'telegram' && !tgSuccess)) {
             const localBlobUrl = window.URL.createObjectURL(fileBlob);
             const a = document.createElement('a');
@@ -987,6 +1067,10 @@ window.downloadTrack = async (track, btnElement) => {
             a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(localBlobUrl);
+            
+            if (routeMode === 'telegram' && !tgSuccess) {
+                alert("Telegram delivery failed. File downloaded to device storage instead. Check Bot Token and Chat ID.");
+            }
         }
         
         window.markTrackDownloaded(track.videoId);
@@ -1003,7 +1087,6 @@ window.downloadTrack = async (track, btnElement) => {
         btnElement.style.pointerEvents = 'auto';
     }
 };
-
 
 document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
     if (window.OCTAVE.activeTrackForOptions) {
@@ -1165,4 +1248,3 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         observer.observe(document.body, { childList: true, subtree: true });
     }
 })();
-
