@@ -993,35 +993,7 @@ window.downloadTrack = async (track, btnElement) => {
         const targetUrl = data.url;
         if (!targetUrl) throw new Error("Worker JSON missing 'url' property.");
 
-        btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving MP3...</span>';
-        
-        await devLog("4. BLOB_FETCH_START", `Fetching MP3 from API link...`);
-
-        let fileResponse;
-        try {
-            fileResponse = await fetch(targetUrl);
-        } catch (networkError) {
-            await devLog("5. BLOB_FETCH_NETWORK_ERROR", `CORS block detected. Triggering native fallback.`);
-            
-            const a = document.createElement('a');
-            a.href = targetUrl;
-            a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
-            a.target = "_blank";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            
-            window.markTrackDownloaded(track.videoId);
-            document.getElementById('track-options-modal').classList.remove('active');
-            return;
-        }
-
-        if (!fileResponse.ok) throw new Error(`RapidAPI CDN HTTP ${fileResponse.status}`);
-        
-        const fileBlob = await fileResponse.blob();
-        await devLog("6. BLOB_GENERATED", `Size: ${(fileBlob.size / 1024 / 1024).toFixed(2)} MB`);
-
-        // --- NEW ROUTING DELIVERY LOGIC ---
+        // --- NEW ISOLATED ROUTING DELIVERY LOGIC ---
         const routeMode = localStorage.getItem('octave_routing_mode') || 'local';
         const userTgToken = localStorage.getItem('octave_tg_token');
         const userChatId = localStorage.getItem('octave_tg_chat_id');
@@ -1029,53 +1001,32 @@ window.downloadTrack = async (track, btnElement) => {
 
         let tgSuccess = false;
 
+        // 1. ATTEMPT TELEGRAM DELIVERY FIRST (If Enabled)
         if ((routeMode === 'telegram' || routeMode === 'both') && userTgToken && userChatId) {
             btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Sending TG...</span>';
-            await devLog("6.5 TG_DELIVERY", "Uploading file securely to User's Telegram Bot...");
+            await devLog("4. TG_DELIVERY", "Instructing Telegram to fetch URL directly (CORS Bypass)...");
             
-            // STRICT CASTING: Telegram is extremely picky about raw blobs. We must explicitly construct a 'File' object with the exact audio/mpeg MIME type.
-            const audioFile = new File([fileBlob], filename, { type: 'audio/mpeg' });
-            
-            const formData = new FormData();
-            formData.append("chat_id", userChatId);
-            formData.append("audio", audioFile);
-            formData.append("title", track.title);
-            formData.append("performer", track.author);
-
             try {
-                // Attempt 1: Standard sendAudio
-                const tgRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendAudio`, {
-                    method: 'POST',
-                    body: formData
-                });
+                // We pass the URL directly to Telegram. Their servers download it instantly.
+                const tgRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendAudio?chat_id=${userChatId}&audio=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(track.title)}&performer=${encodeURIComponent(track.author)}`);
                 
                 if (tgRes.ok) {
                     tgSuccess = true;
-                    await devLog("TG_DELIVERY_SUCCESS", "MP3 Sent to Bot via sendAudio!");
+                    await devLog("TG_DELIVERY_SUCCESS", "MP3 Sent to Bot via URL!");
                 } else {
                     const tgErr = await tgRes.text();
                     await devLog("TG_DELIVERY_FAIL_AUDIO", tgErr);
                     
-                    // Attempt 2: sendDocument Fallback 
-                    // If Telegram rejects sendAudio due to strict MP3 encoding checks, sendDocument forces it through as a raw file.
-                    await devLog("TG_DELIVERY_RETRY", "Trying sendDocument fallback...");
-                    
-                    const docFormData = new FormData();
-                    docFormData.append("chat_id", userChatId);
-                    docFormData.append("document", audioFile);
-                    
-                    const tgDocRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendDocument`, {
-                        method: 'POST',
-                        body: docFormData
-                    });
+                    await devLog("TG_DELIVERY_RETRY", "Trying sendDocument fallback with URL...");
+                    const tgDocRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendDocument?chat_id=${userChatId}&document=${encodeURIComponent(targetUrl)}`);
                     
                     if (tgDocRes.ok) {
                         tgSuccess = true;
-                        await devLog("TG_DELIVERY_SUCCESS_DOC", "MP3 Sent to Bot as raw Document!");
+                        await devLog("TG_DELIVERY_SUCCESS_DOC", "MP3 Sent to Bot as raw Document URL!");
                     } else {
                         const tgDocErr = await tgDocRes.text();
                         await devLog("TG_DELIVERY_FAIL_DOC", tgDocErr);
-                        throw new Error("Telegram rejected both sendAudio and sendDocument.");
+                        throw new Error("Telegram rejected URL via both endpoints.");
                     }
                 }
             } catch (e) {
@@ -1084,16 +1035,34 @@ window.downloadTrack = async (track, btnElement) => {
             }
         }
 
-        // Always fallback to device storage if they requested local, both, OR if Telegram outright failed
+        // 2. ATTEMPT LOCAL DELIVERY (If Enabled, OR if Telegram Failed)
         if (routeMode === 'local' || routeMode === 'both' || (routeMode === 'telegram' && !tgSuccess)) {
-            const localBlobUrl = window.URL.createObjectURL(fileBlob);
-            const a = document.createElement('a');
-            a.href = localBlobUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(localBlobUrl);
+            btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving Local...</span>';
+            await devLog("5. LOCAL_DOWNLOAD", "Attempting local device download...");
+
+            try {
+                const fileResponse = await fetch(targetUrl);
+                if (!fileResponse.ok) throw new Error(`RapidAPI CDN HTTP ${fileResponse.status}`);
+                const fileBlob = await fileResponse.blob();
+                const localBlobUrl = window.URL.createObjectURL(fileBlob);
+                const a = document.createElement('a');
+                a.href = localBlobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(localBlobUrl);
+            } catch (networkError) {
+                // If it hits CORS, we gracefully fallback to native link click ONLY for the local file.
+                await devLog("5.5 LOCAL_CORS_FALLBACK", `CORS block detected. Triggering native fallback.`);
+                const a = document.createElement('a');
+                a.href = targetUrl;
+                a.download = filename;
+                a.target = "_blank";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
             
             if (routeMode === 'telegram' && !tgSuccess) {
                 alert("Telegram delivery failed. File downloaded to device storage instead. Check Bot Token and Chat ID.");
@@ -1101,8 +1070,7 @@ window.downloadTrack = async (track, btnElement) => {
         }
         
         window.markTrackDownloaded(track.videoId);
-        
-        await devLog("7. COMPLETE", "MP3 routing and delivery finished successfully.");
+        await devLog("6. COMPLETE", "MP3 routing and delivery finished successfully.");
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
