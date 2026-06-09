@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (APIFY HYBRID BLOB STREAM)
+// app.js — Octave Full Flagship Engine (APIFY NATIVE MP3 STREAM)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -777,7 +777,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- APIFY DIRECT BLOB STREAM DOWNLOAD ENGINE ---
+// --- APIFY HIGH-SPEED DIRECT MP3 DOWNLOAD ENGINE ---
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -806,17 +806,14 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Ready...</span>';
     btnElement.style.pointerEvents = 'none';
 
     try {
-        // 1. Get the secure link from your proxy (which uses Apify behind the scenes)
+        // 1. Instantly pull the secure MP3 link from the secure proxy Worker
         const proxyResponse = await fetch('https://octavecd9.bdra77367.workers.dev', {
             method: 'POST',
-            headers: { 
-                'Accept': 'application/json',
-                'Content-Type': 'application/json' 
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ videoId: track.videoId })
         });
 
@@ -825,37 +822,22 @@ window.downloadTrack = async (track, btnElement) => {
         }
 
         const data = await proxyResponse.json();
-        
         if (!data.url) throw new Error("No download URL returned from proxy.");
 
-        btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading...</span>';
-
-        // 2. Fetch the actual file bytes using the phone's internet (bypasses YouTube CDN blocks)
-        // YouTube's CDN natively allows cross-origin resource sharing (CORS) for media.
-        const audioResponse = await fetch(data.url);
-        if (!audioResponse.ok) throw new Error("Failed to pull media from YouTube CDN.");
-
-        // 3. Convert to a local file object (Blob) inside the app
-        const blob = await audioResponse.blob();
-        const objectUrl = window.URL.createObjectURL(blob);
-        
-        // 4. Force a clean, local download (bypasses popup blockers and CORS download rules)
+        // 2. Fire the native browser link engine immediately (Fastest drop possible)
         const a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.m4a`;
+        a.href = data.url;
+        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        
-        // Clean up memory
-        window.URL.revokeObjectURL(objectUrl);
         
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
         console.error("Extraction Error:", error);
-        alert("Download failed. Check Telegram logs or your internet connection.");
+        alert("Fast download failed. Check Telegram logs.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
@@ -909,125 +891,4 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
                     }
                     window.OCTAVE.playlists[finalName] = data.videos.map(v => ({
                         videoId: v.videoId,
-                        title: v.title,
-                        author: v.author,
-                        thumb: (v.videoThumbnails && v.videoThumbnails.length > 0) ? v.videoThumbnails[0].url : ''
-                    }));
-                    window.saveCache();
-                    success = true;
-                    alert(`Imported ${data.videos.length} tracks!`);
-                    document.getElementById('yt-import-modal').classList.remove('active');
-                    document.getElementById('yt-playlist-url').value = '';
-                    window.renderHome();
-                    break;
-                }
-            }
-        } catch (e) {
-            continue;
-        }
-    }
-    if (!success) alert("Failed.");
-    btn.innerHTML = 'Import';
-    btn.disabled = false;
-});
-
-// ============================================================
-// CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
-// ============================================================
-(function() {
-    // Detect Brave browser
-    let isBrave = false;
-    if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
-        navigator.brave.isBrave().then(console.log).catch(() => {});
-        // Synchronous check: many Brave versions expose isBrave sync
-        isBrave = navigator.brave.isBrave ? false : false;
-    }
-    // Better sync detection using a known property
-    if (navigator.brave && navigator.brave.isBrave) {
-        isBrave = true;
-    }
-    // Additional check: Brave's userAgent often contains "Brave"
-    if (!isBrave && navigator.userAgent.includes('Brave')) isBrave = true;
-    
-    if (isBrave) {
-        console.log('Brave detected – skipping Chrome background fixes');
-        return;
-    }
-    
-    console.log('Chrome/Chromium detected – applying background playback fixes');
-    
-    let silentAudioCtx = null;
-    let keepAliveStarted = false;
-    
-    function startSilentAudioContext() {
-        if (silentAudioCtx && silentAudioCtx.state === 'running') return;
-        const AudioCtor = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtor) return;
-        try {
-            silentAudioCtx = new AudioCtor();
-            const buffer = silentAudioCtx.createBuffer(1, 1, 22050);
-            const source = silentAudioCtx.createBufferSource();
-            source.buffer = buffer;
-            source.loop = true;
-            source.connect(silentAudioCtx.destination);
-            source.start();
-            silentAudioCtx.resume().catch(e => console.warn('Silent ctx resume failed', e));
-            keepAliveStarted = true;
-        } catch (e) {
-            console.warn('Silent AudioContext failed', e);
-        }
-    }
-    
-    // Wrap play functions to start silent context on first user playback
-    function wrapPlayFunction(originalFn, name) {
-        if (typeof originalFn !== 'function') return originalFn;
-        return function(...args) {
-            if (!keepAliveStarted) {
-                startSilentAudioContext();
-            }
-            return originalFn.apply(this, args);
-        };
-    }
-    
-    if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
-    if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
-    
-    // Visibility listener: resume if audio was playing and page becomes hidden
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden && window.audio && !window.audio.paused) {
-            setTimeout(() => {
-                if (window.audio && !window.audio.paused) {
-                    window.audio.play().catch(e => console.warn('Auto-resume failed', e));
-                }
-            }, 100);
-        }
-    });
-    
-    // Override MediaSession pause action to prevent actual pause
-    if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('pause', () => {
-            if (window.audio && !window.audio.paused) {
-                setTimeout(() => window.audio.play().catch(e => console.warn), 50);
-            }
-        });
-    }
-    
-    // Also start silent context on any 'play' event from the audio element
-    if (window.audio) {
-        window.audio.addEventListener('play', () => {
-            if (!keepAliveStarted) startSilentAudioContext();
-        });
-    } else {
-        // If audio element is created later, listen for its addition
-        const observer = new MutationObserver(() => {
-            if (window.audio && !window.audio._bgFixAttached) {
-                window.audio.addEventListener('play', () => {
-                    if (!keepAliveStarted) startSilentAudioContext();
-                });
-                window.audio._bgFixAttached = true;
-                observer.disconnect();
-            }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
-})();
+                        title
