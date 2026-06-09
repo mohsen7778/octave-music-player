@@ -1,62 +1,6 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (RESTORED MAIN TRUNK)
+// app.js — Octave Full Flagship Engine (APIFY DIRECT STREAM)
 // ============================================================
-
-// --- INITIAL STATE & GLOBAL STRUCTS ---
-if (!window.OCTAVE) {
-    window.OCTAVE = {
-        queue: [],
-        currentIndex: -1,
-        playlists: {},
-        liked: {},
-        recentPlayed: [],
-        recentSearches: [],
-        selectedFont: localStorage.getItem('octave_font') || 'Inter',
-        activeTrackForOptions: null
-    };
-}
-
-// Global caching helper framework
-window.saveCache = function() {
-    try {
-        localStorage.setItem('octave_vault_state', JSON.stringify(window.OCTAVE));
-    } catch(e) {
-        console.error("Cache serialization failure:", e);
-    }
-};
-
-window.loadCache = function() {
-    try {
-        const data = localStorage.getItem('octave_vault_state');
-        if (data) {
-            const parsed = JSON.parse(data);
-            window.OCTAVE = Object.assign(window.OCTAVE, parsed);
-        }
-    } catch(e) {
-        console.error("Cache recovery failure:", e);
-    }
-};
-
-// Global escape HTML wrapper utility
-window.escapeHTML = function(str) {
-    if (!str) return '';
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-};
-
-// Auto-initialize memory structures instantly on boot
-window.loadCache();
-
-// --- INVIDIOUS EXTRACTION NODES TRUNK ---
-window.INVIDIOUS = [
-    "https://invidious.nerdvpn.de",
-    "https://inv.tux.pizza",
-    "https://invidious.no-logs.com",
-    "https://invidious.perennialte.ch",
-    "https://yewtu.be",
-    "https://invidious.io.lol",
-    "https://iv.ggty.biz"
-];
-window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
 let deferredInstallPrompt;
 
@@ -82,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const shareTh = params.get('th') || '';
         
         const sharedTrack = { videoId: shareV, title: shareT, author: shareA, thumb: shareTh };
-        window.OCTAVE.queue = [sharedTrack];
+        window.OCTAVE.queue =[sharedTrack];
         window.OCTAVE.currentIndex = 0;
         window.saveCache();
         
@@ -112,7 +56,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Handle splash screen exit accurately
     setTimeout(() => {
         const splash = document.getElementById('splash-screen');
         if (splash) {
@@ -124,7 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const dynamicView = document.getElementById('dynamic-view');
     const views = {
-        home: dynamicView ? dynamicView.innerHTML : '',
+        home: dynamicView.innerHTML,
         search: `
             <header class="search-header" style="padding: 40px 20px 20px 20px; background: var(--bg-deep);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
@@ -167,8 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.querySelectorAll('.nav-item').forEach(item => {
         item.addEventListener('click', () => {
-            const currentActive = document.querySelector('.nav-item.active');
-            if (currentActive) currentActive.classList.remove('active');
+            document.querySelector('.nav-item.active').classList.remove('active');
             item.classList.add('active');
             const tab = item.getAttribute('data-tab');
 
@@ -189,12 +131,12 @@ document.addEventListener('DOMContentLoaded', () => {
     handleBravePrompt();
     window.renderHome();
 
-    // Secure modal button event configurations
+    // Bound only once at startup
     document.getElementById('close-playlist')?.addEventListener('click', () => document.getElementById('playlist-modal').classList.remove('active'));
     document.getElementById('save-playlist')?.addEventListener('click', () => {
         const name = document.getElementById('playlist-name').value.trim();
         if (name !== '' && !window.OCTAVE.playlists[name]) {
-            window.OCTAVE.playlists[name] = [];
+            window.OCTAVE.playlists[name] =[];
             window.saveCache();
             document.getElementById('playlist-name').value = '';
             document.getElementById('playlist-modal').classList.remove('active');
@@ -202,12 +144,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    document.querySelector('.mini-inner')?.addEventListener('click', () => document.getElementById('full-player').classList.add('active'));
-    document.getElementById('close-fp')?.addEventListener('click', () => document.getElementById('full-player').classList.remove('active'));
-    document.getElementById('close-track-options')?.addEventListener('click', () => document.getElementById('track-options-modal').classList.remove('active'));
-    document.getElementById('close-select-playlist')?.addEventListener('click', () => document.getElementById('select-playlist-modal').classList.remove('active'));
+    document.querySelector('.mini-inner').addEventListener('click', () => document.getElementById('full-player').classList.add('active'));
+    document.getElementById('close-fp').addEventListener('click', () => document.getElementById('full-player').classList.remove('active'));
+    document.getElementById('close-track-options').addEventListener('click', () => document.getElementById('track-options-modal').classList.remove('active'));
+    document.getElementById('close-select-playlist').addEventListener('click', () => document.getElementById('select-playlist-modal').classList.remove('active'));
     
-    document.getElementById('close-yt-import')?.addEventListener('click', () => document.getElementById('yt-import-modal').classList.remove('active'));
+    document.getElementById('close-yt-import').addEventListener('click', () => document.getElementById('yt-import-modal').classList.remove('active'));
     document.getElementById('close-ai-mix')?.addEventListener('click', () => document.getElementById('ai-mix-modal').classList.remove('active'));
 
     document.querySelectorAll('.modal-overlay').forEach(modal => {
@@ -219,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// --- GLOBAL EVENT DELEGATION FRAMEWORK ---
+// --- GLOBAL EVENT DELEGATION (Fixes the "Only works once" bug forever!) ---
 document.body.addEventListener('click', async (e) => {
     if (e.target.closest('#menu-btn')) {
         document.getElementById('side-menu').classList.add('active');
@@ -239,6 +181,7 @@ document.body.addEventListener('click', async (e) => {
         document.getElementById('ai-mix-modal').classList.add('active');
     }
     
+    // NEW: Global binders for Auto-DJ and Liked Songs
     if (e.target.closest('#open-discover-mix')) {
         if (window.generateDiscoverMix) window.generateDiscoverMix();
     }
@@ -272,115 +215,6 @@ document.body.addEventListener('click', async (e) => {
     }
 });
 
-// --- CORE DISCOVERY & PLAYER CONTROL ARCHITECTURE ---
-window.performSearch = async function(query) {
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        try {
-            const res = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video`);
-            if (res.ok) {
-                const data = await res.json();
-                return data.map(v => ({
-                    videoId: v.videoId,
-                    title: v.title,
-                    author: v.author,
-                    thumb: (v.videoThumbnails && v.videoThumbnails.length > 0) ? v.videoThumbnails[0].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`
-                }));
-            }
-        } catch(e) {
-            continue;
-        }
-    }
-    return [];
-};
-
-window.playTrack = function(track) {
-    if (!track) return;
-    
-    // Manage state history pipeline natively
-    const duplicateIndex = window.OCTAVE.recentPlayed.findIndex(t => t.videoId === track.videoId);
-    if (duplicateIndex !== -1) window.OCTAVE.recentPlayed.splice(duplicateIndex, 1);
-    window.OCTAVE.recentPlayed.unshift(track);
-    if (window.OCTAVE.recentPlayed.length > 6) window.OCTAVE.recentPlayed.pop();
-    
-    // Add to search memory context trace
-    const searchDuplicate = window.OCTAVE.recentSearches.findIndex(t => t.videoId === track.videoId);
-    if (searchDuplicate !== -1) window.OCTAVE.recentSearches.splice(searchDuplicate, 1);
-    window.OCTAVE.recentSearches.unshift(track);
-    if (window.OCTAVE.recentSearches.length > 10) window.OCTAVE.recentSearches.pop();
-
-    window.saveCache();
-
-    // Check configuration boundary constraints before creating target elements
-    let audioEl = document.getElementById('main-audio-engine');
-    if (!audioEl) {
-        audioEl = document.createElement('audio');
-        audioEl.id = 'main-audio-engine';
-        document.body.appendChild(audioEl);
-        window.audio = audioEl;
-    }
-
-    // Force immediate UI reflection states
-    const titleEls = document.querySelectorAll('.track-title-render');
-    const authorEls = document.querySelectorAll('.track-author-render');
-    const thumbEls = document.querySelectorAll('.track-thumb-render');
-
-    titleEls.forEach(el => el.textContent = track.title);
-    authorEls.forEach(el => el.textContent = track.author);
-    thumbEls.forEach(el => {
-        if (el.tagName === 'IMG') el.src = track.thumb;
-        else el.style.backgroundImage = `url('${track.thumb}')`;
-    });
-
-    const playBtnIcons = document.querySelectorAll('.play-trigger-icon');
-    playBtnIcons.forEach(icon => {
-        icon.classList.remove('fa-play');
-        icon.classList.add('fa-spinner', 'fa-spin');
-    });
-
-    // Directly bind resource node location mapping parameters
-    const sourceBase = window.INVIDIOUS[window.invIdx];
-    audioEl.src = `${sourceBase}/latest_version?id=${track.videoId}&itag=140&local=true`;
-    
-    audioEl.play().then(() => {
-        playBtnIcons.forEach(icon => {
-            icon.classList.remove('fa-spinner', 'fa-spin');
-            icon.classList.add('fa-pause');
-        });
-    }).catch(err => {
-        console.warn("Playback pipeline execution conflict, auto-adjusting node cluster mapping context...", err);
-        window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
-        // Recursive safe redirection fallback layer
-        setTimeout(() => window.playTrack(track), 200);
-    });
-
-    // Unify MediaSession interfaces instantly
-    if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-            title: track.title,
-            artist: track.author,
-            artwork: [{ src: track.thumb, sizes: '512x512', type: 'image/jpeg' }]
-        });
-    }
-};
-
-window.playTrackByIndex = function(index) {
-    if (index >= 0 && index < window.OCTAVE.queue.length) {
-        window.OCTAVE.currentIndex = index;
-        window.playTrack(window.OCTAVE.queue[index]);
-    }
-};
-
-window.toggleLike = function(track) {
-    if (!track) return;
-    if (window.OCTAVE.liked[track.videoId]) {
-        delete window.OCTAVE.liked[track.videoId];
-    } else {
-        window.OCTAVE.liked[track.videoId] = track;
-    }
-    window.saveCache();
-    window.renderHome();
-};
 
 // --- AI MIX ENGINE (POST METHOD FIX FOR LARGE PROMPTS) ---
 async function generateAiMix() {
@@ -396,13 +230,13 @@ async function generateAiMix() {
     try {
         let tasteContext = "";
         if (window.OCTAVE && typeof window.calculateTrackScore === 'function') {
-            const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
+            const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
             const uniqueTracks = Array.from(new Map(allKnown.map(t => [t.videoId, t])).values());
             const topScored = uniqueTracks.sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a)).slice(0, 5);
             
             if (topScored.length > 0) {
                 const cleanNames = topScored.map(t => `${t.title.replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 30)} by ${t.author.replace(/[^a-zA-Z0-9 ]/g, '')}`).join(", ");
-                tasteContext = `\nContext: The user recently played: [${cleanNames}]. If these are actual songs, use them to gauge their taste. IF THEY ARE TUTORIALS, NEWS, PODCASTS, OR YOUTUBE VIDEOS, COMPLETELY IGNORE THEM.\n`;
+                tasteContext = `\nContext: The user recently played:[${cleanNames}]. If these are actual songs, use them to gauge their taste. IF THEY ARE TUTORIALS, NEWS, PODCASTS, OR YOUTUBE VIDEOS, COMPLETELY IGNORE THEM.\n`;
             }
         }
 
@@ -415,11 +249,12 @@ CRITICAL RULES:
 2. Recommend ONLY actual music tracks (songs). NEVER recommend tutorials, news, podcasts, HTML coding, or conversational videos.
 3. Do NOT include numbers, quotes, bullet points, HTML tags, or any other text.`;
         
+        // FIXED: Using POST so long history texts don't break the URL limits!
         const response = await fetch(`https://text.pollinations.ai/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                messages: [{ role: 'system', content: systemPrompt }]
+                messages:[{ role: 'system', content: systemPrompt }]
             })
         });
         const text = await response.text();
@@ -430,7 +265,7 @@ CRITICAL RULES:
 
         if (lines.length === 0) throw new Error("Format invalid. Please try a different prompt.");
 
-        const playableTracks = [];
+        const playableTracks =[];
         for (const line of lines.slice(0, 15)) {
             const parts = line.split(/[-–—]/);
             if(parts.length < 2) continue;
@@ -468,7 +303,7 @@ CRITICAL RULES:
 }
 document.getElementById('generate-ai-mix')?.addEventListener('click', generateAiMix);
 
-// --- RESTORED CORE SECTIONS & INTERFACE IMPLEMENTATIONS ---
+// --- RESTORED CORE FUNCTIONS ---
 window.openTrackOptions = (track) => {
     window.OCTAVE.activeTrackForOptions = track;
     const infoDiv = document.getElementById('opt-track-info');
@@ -484,65 +319,22 @@ window.openTrackOptions = (track) => {
     document.getElementById('track-options-modal').classList.add('active');
 };
 
-window.exportVault = function() {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.OCTAVE));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `octave_vault_backup_${new Date().toISOString().slice(0,10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-};
-
-window.importVault = function(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(evt) {
-        try {
-            const parsed = JSON.parse(evt.target.result);
-            if (parsed.playlists || parsed.liked) {
-                window.OCTAVE = Object.assign(window.OCTAVE, parsed);
-                window.saveCache();
-                window.renderHome();
-                alert("Vault tracking configurations imported completely!");
-            }
-        } catch(err) {
-            alert("Structural tracking error within targeted restoration backup file.");
-        }
-    };
-    reader.readAsText(file);
-};
-
-document.getElementById('export-vault-btn')?.addEventListener('click', () => {
+document.getElementById('export-vault-btn').addEventListener('click', () => {
     document.getElementById('side-menu').classList.remove('active');
     document.getElementById('menu-backdrop').classList.remove('active');
     window.exportVault();
 });
-document.getElementById('import-vault-btn')?.addEventListener('click', () => {
+document.getElementById('import-vault-btn').addEventListener('click', () => {
     document.getElementById('import-vault-input').click();
 });
-document.getElementById('import-vault-input')?.addEventListener('change', window.importVault);
+document.getElementById('import-vault-input').addEventListener('change', window.importVault);
 
 const fpPanel = document.getElementById('fp-overlay-panel');
 const fpContent = document.getElementById('fp-overlay-content');
 const fpTitle = document.getElementById('fp-overlay-title');
-document.getElementById('close-fp-overlay')?.addEventListener('click', () => fpPanel.classList.remove('active'));
+document.getElementById('close-fp-overlay').addEventListener('click', () => fpPanel.classList.remove('active'));
 
-window.fetchLyrics = async function(artist, title) {
-    try {
-        const cleanArtist = encodeURIComponent(artist.replace(/ - Topic$/i, '').trim());
-        const cleanTitle = encodeURIComponent(title.replace(/\s*\(.*?\)\s*/g, '').trim());
-        const res = await fetch(`https://api.lyrics.ovh/v1/${cleanArtist}/${cleanTitle}`);
-        if (res.ok) {
-            const data = await res.json();
-            if (data.lyrics) return `<pre style="font-family: inherit; font-size: 16px; white-space: pre-wrap; line-height: 1.8; text-align: center;">${window.escapeHTML(data.lyrics)}</pre>`;
-        }
-    } catch(e) {}
-    return '<div class="empty-state-text">Lyrics couldn\'t be found for this tracking element configuration context.</div>';
-};
-
-document.getElementById('fp-lyrics-btn')?.addEventListener('click', async () => {
+document.getElementById('fp-lyrics-btn').addEventListener('click', async () => {
     if (window.OCTAVE.currentIndex < 0) return;
     fpTitle.innerText = 'Lyrics';
     fpContent.innerHTML = '<div style="text-align:center; margin-top: 40px;"><i class="fa-solid fa-spinner fa-spin" style="font-size: 24px; color: var(--accent);"></i></div>';
@@ -551,7 +343,7 @@ document.getElementById('fp-lyrics-btn')?.addEventListener('click', async () => 
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     const html = await window.fetchLyrics(track.author, track.title);
 
-    const fonts = [
+    const fonts =[
         { name: 'Modern', css: 'Plus Jakarta Sans' },
         { name: 'Clean', css: 'Inter' },
         { name: 'Classic', css: 'Lora' },
@@ -602,17 +394,6 @@ window.setLyricsFont = (fontCss, el) => {
     }
 };
 
-window.fetchFullArtistProfile = async function(artistName) {
-    const cleanName = artistName.replace(/ - Topic$/i, '').trim();
-    const tracks = await window.performSearch(cleanName);
-    return {
-        name: cleanName,
-        bio: `${cleanName} is an elite verified tracking artist inside the Octave execution engine framework environment.`,
-        banner: tracks.length > 0 ? tracks[0].thumb : '',
-        tracks: tracks
-    };
-};
-
 window.renderArtistPage = async (artistName) => {
     document.getElementById('full-player').classList.remove('active');
     document.getElementById('fp-overlay-panel').classList.remove('active');
@@ -659,7 +440,7 @@ window.renderArtistPage = async (artistName) => {
     if (profile.tracks.length > 0) {
         document.querySelectorAll('.artist-track-item').forEach((node, idx) => {
             node.addEventListener('click', () => {
-                window.OCTAVE.queue = [...profile.tracks];
+                window.OCTAVE.queue =[...profile.tracks];
                 window.playTrackByIndex(idx);
             });
         });
@@ -708,39 +489,9 @@ if (document.getElementById('fp-options')) {
     });
 }
 
-window.playPlaylist = function(plName) {
-    const tracks = window.OCTAVE.playlists[plName];
-    if (tracks && tracks.length > 0) {
-        window.OCTAVE.queue = [...tracks];
-        window.playTrackByIndex(0);
-    }
-};
-
-window.deletePlaylist = function(plName) {
-    if (confirm(`Are you absolutely sure you want to delete "${plName}"?`)) {
-        delete window.OCTAVE.playlists[plName];
-        window.saveCache();
-        document.querySelector('.nav-item[data-tab="home"]').click();
-    }
-};
-
-window.removeFromPlaylist = function(plName, index) {
-    if (window.OCTAVE.playlists[plName]) {
-        window.OCTAVE.playlists[plName].splice(index, 1);
-        window.saveCache();
-        window.renderPlaylistDetail(plName);
-    }
-};
-
-window.removeFromLiked = function(vidId) {
-    delete window.OCTAVE.liked[vidId];
-    window.saveCache();
-    window.renderLikedSongs();
-};
-
 window.renderPlaylistDetail = (plName) => {
     const dynamicView = document.getElementById('dynamic-view');
-    const tracks = window.OCTAVE.playlists[plName] || [];
+    const tracks = window.OCTAVE.playlists[plName] ||[];
     let html = `
         <div style="padding: 20px;">
             <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px; margin-top: 10px;">
@@ -760,8 +511,8 @@ window.renderPlaylistDetail = (plName) => {
         tracks.forEach((track, idx) => {
             html += `
                 <div class="list-item" style="position: relative;">
-                    <img src="${track.thumb}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.OCTAVE.queue = [...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
-                    <div class="list-info" style="cursor: pointer;" onclick="window.OCTAVE.queue = [...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
+                    <img src="${track.thumb}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.OCTAVE.queue =[...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
+                    <div class="list-info" style="cursor: pointer;" onclick="window.OCTAVE.queue =[...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
                         <div class="list-title">${window.escapeHTML(track.title)}</div>
                         <div class="list-subtitle">${window.escapeHTML(track.author)}</div>
                     </div>
@@ -932,7 +683,6 @@ function bindSearch() {
     const input = document.getElementById('searchInput');
     const resContainer = document.getElementById('searchResults');
     let timer;
-    if (!input || !resContainer) return;
     input.addEventListener('input', (e) => {
         clearTimeout(timer);
         const query = e.target.value.trim();
@@ -1007,7 +757,6 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     document.getElementById('track-options-modal').classList.remove('active');
     const plModal = document.getElementById('select-playlist-modal');
     const list = document.getElementById('playlist-selection-list');
-    if (!plModal || !list) return;
     if (Object.keys(window.OCTAVE.playlists).length === 0) {
         list.innerHTML = '<div class="empty-state-text">No playlists.</div>';
     } else {
@@ -1020,8 +769,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
                 window.OCTAVE.playlists[plName].push(window.OCTAVE.activeTrackForOptions);
                 window.saveCache();
                 plModal.classList.remove('active');
-                const headerH1 = document.querySelector('h1');
-                if (window.renderPlaylistDetail && headerH1 && headerH1.textContent === plName) window.renderPlaylistDetail(plName);
+                if (window.renderPlaylistDetail && document.querySelector('h1').textContent === plName) window.renderPlaylistDetail(plName);
             });
             list.appendChild(el);
         });
@@ -1029,7 +777,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- APIFY HIGH-SPEED DIRECT MP3 DOWNLOAD ENGINE TRACKS ---
+// --- APIFY HIGH-SPEED DIRECT MP3 DOWNLOAD ENGINE ---
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -1075,12 +823,13 @@ window.downloadTrack = async (track, btnElement) => {
         const data = await proxyResponse.json();
         if (!data.url) throw new Error("No download URL returned from proxy.");
 
+        // Fast path link deployment pipeline bypasses cross-origin security context bounds entirely
         const a = document.createElement('a');
         a.href = data.url;
         a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
         document.body.appendChild(a);
         a.click();
-        document.body.remove();
+        document.body.removeChild(a);
         
         window.markTrackDownloaded(track.videoId);
         document.getElementById('track-options-modal').classList.remove('active');
@@ -1117,7 +866,6 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         return;
     }
     const btn = document.getElementById('start-yt-import');
-    if (!btn) return;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
     btn.disabled = true;
 
@@ -1168,14 +916,18 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
 // CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
 // ============================================================
 (function() {
+    // Detect Brave browser
     let isBrave = false;
     if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
         navigator.brave.isBrave().then(console.log).catch(() => {});
+        // Synchronous check: many Brave versions expose isBrave sync
         isBrave = navigator.brave.isBrave ? false : false;
     }
+    // Better sync detection using a known property
     if (navigator.brave && navigator.brave.isBrave) {
         isBrave = true;
     }
+    // Additional check: Brave's userAgent often contains "Brave"
     if (!isBrave && navigator.userAgent.includes('Brave')) isBrave = true;
     
     if (isBrave) {
@@ -1207,6 +959,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     }
     
+    // Wrap play functions to start silent context on first user playback
     function wrapPlayFunction(originalFn, name) {
         if (typeof originalFn !== 'function') return originalFn;
         return function(...args) {
@@ -1220,6 +973,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
     if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
     
+    // Visibility listener: resume if audio was playing and page becomes hidden
     document.addEventListener('visibilitychange', () => {
         if (document.hidden && window.audio && !window.audio.paused) {
             setTimeout(() => {
@@ -1230,6 +984,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         }
     });
     
+    // Override MediaSession pause action to prevent actual pause
     if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('pause', () => {
             if (window.audio && !window.audio.paused) {
@@ -1238,11 +993,13 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
         });
     }
     
+    // Also start silent context on any 'play' event from the audio element
     if (window.audio) {
         window.audio.addEventListener('play', () => {
             if (!keepAliveStarted) startSilentAudioContext();
         });
     } else {
+        // If audio element is created later, listen for its addition
         const observer = new MutationObserver(() => {
             if (window.audio && !window.audio._bgFixAttached) {
                 window.audio.addEventListener('play', () => {
