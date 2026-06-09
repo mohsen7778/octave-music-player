@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (APIFY DIRECT STREAM)
+// app.js — Octave Full Flagship Engine (RAW DEV LOGS + CORS BYPASS)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -777,23 +777,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- CLOUDFLARE WORKER + DEDICATED TELEGRAM LOGGING ENGINE ---
-const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
-const TELEGRAM_CHAT_ID = '7746909110';
-
-async function logToTelegram(status, track, extraInfo = '') {
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID || TELEGRAM_BOT_TOKEN.startsWith('YOUR_')) return;
-    const message = `🎵 <b>Octave Engine Download Log</b>\n<b>Status:</b> ${status}\n<b>Track:</b> ${track.title}\n<b>Artist:</b> ${track.author}\n<b>ID:</b> ${track.videoId}${extraInfo ? `\n<b>Details:</b> ${extraInfo}` : ''}`;
-    try {
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' })
-        });
-    } catch (e) {
-        console.error("Failed sending log to Telegram:", e);
-    }
-}
+// --- ADVANCED APIFY MP3 STREAM & EXTREME DEV LOGGING ENGINE ---
 
 window.getDownloadedTracks = () => {
     try {
@@ -826,9 +810,26 @@ window.downloadTrack = async (track, btnElement) => {
     btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
     btnElement.style.pointerEvents = 'none';
 
-    await logToTelegram('Started ⏳', track);
+    // HARDCODED TELEGRAM LOGGER VARIABLES
+    const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
+    const TELEGRAM_CHAT_ID = '7746909110';
+
+    async function devLog(phase, details = "") {
+        const msg = `🐛 <b>DEV LOG</b>\n<b>Phase:</b> ${phase}\n<b>Track:</b> ${track.title}\n<b>Details:</b> <pre>${window.escapeHTML(typeof details === 'object' ? JSON.stringify(details, null, 2) : details)}</pre>`;
+        try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: msg, parse_mode: 'HTML' })
+            });
+        } catch(e) { console.error("Log failed", e); }
+    }
+
+    await devLog("1. INIT", "Download button clicked. Starting pipeline...");
 
     try {
+        await devLog("2. WORKER_PING", "Sending POST to octavecd9.bdra77367.workers.dev...");
+        
         const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
             method: 'POST',
             headers: { 
@@ -838,24 +839,51 @@ window.downloadTrack = async (track, btnElement) => {
             body: JSON.stringify({ videoId: track.videoId, format: 'mp3' })
         });
 
+        await devLog("3. WORKER_RESPONSE_HEADERS", `Status: ${response.status}\nOK: ${response.ok}`);
+
         if (!response.ok) {
-            throw new Error(`Worker status code: ${response.status}`);
+            const text = await response.text();
+            throw new Error(`Worker HTTP ${response.status}: ${text}`);
         }
 
         const data = await response.json();
+        await devLog("4. APIFY_DATA", data);
+
         const targetUrl = data.url || data.downloadUrl;
-        
-        if (!targetUrl) {
-            throw new Error("Worker responded successfully but did not supply a valid streaming resource URL.");
-        }
+        if (!targetUrl) throw new Error("Worker JSON missing 'url' property.");
 
         btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading MP3...</span>';
+        
+        await devLog("5. BLOB_FETCH_START", `Initiating frontend fetch to YouTube CDN:\n${targetUrl.substring(0, 150)}...`);
 
-        // Direct fetch to blob transforms cross-origin streaming paths to local system resources
-        const fileResponse = await fetch(targetUrl);
-        if (!fileResponse.ok) throw new Error("Failed to capture binary stream from audio extraction server.");
+        let fileResponse;
+        try {
+            fileResponse = await fetch(targetUrl);
+        } catch (networkError) {
+            await devLog("6. BLOB_FETCH_NETWORK_ERROR", `CORS or Network block detected.\nName: ${networkError.name}\nMessage: ${networkError.message}\nStack: ${networkError.stack}`);
+            
+            // CORS BYPASS FALLBACK: Force native browser download if blob fetch gets blocked
+            await devLog("7. FALLBACK_TRIGGERED", "Attempting native <a> tag navigation bypass...");
+            const a = document.createElement('a');
+            a.href = targetUrl;
+            a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+            a.target = "_blank";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            window.markTrackDownloaded(track.videoId);
+            document.getElementById('track-options-modal').classList.remove('active');
+            return; // Exit out, fallback successful
+        }
+
+        await devLog("6. BLOB_FETCH_STATUS", `CDN Status: ${fileResponse.status}\nOK: ${fileResponse.ok}`);
+
+        if (!fileResponse.ok) throw new Error(`CDN HTTP ${fileResponse.status}`);
         
         const fileBlob = await fileResponse.blob();
+        await devLog("7. BLOB_GENERATED", `Size: ${(fileBlob.size / 1024 / 1024).toFixed(2)} MB\nType: ${fileBlob.type}`);
+
         const localBlobUrl = window.URL.createObjectURL(fileBlob);
         
         const a = document.createElement('a');
@@ -868,13 +896,13 @@ window.downloadTrack = async (track, btnElement) => {
         window.URL.revokeObjectURL(localBlobUrl);
         window.markTrackDownloaded(track.videoId);
         
-        await logToTelegram('Success ✅', track, `File size: ${(fileBlob.size / (1024 * 1024)).toFixed(2)} MB`);
+        await devLog("8. COMPLETE", "Blob saved to local filesystem successfully.");
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
         console.error("Extraction Error:", error);
-        await logToTelegram('Failed ❌', track, error.message);
-        alert("Download failed. Check Telegram logs for details.");
+        await devLog("FATAL_CRASH", `Name: ${error.name}\nMessage: ${error.message}\nStack: ${error.stack}`);
+        alert("Download failed. Check Telegram dev logs.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
