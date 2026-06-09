@@ -994,3 +994,47 @@ html, body {
     overscroll-behavior-y: contain !important; 
     -webkit-overflow-scrolling: touch !important; /* Ensures smooth, native-feeling scrolling on iOS */
 }
+/* =========================================
+   routing.css - Telegram Routing Dashboard
+   ========================================= */
+
+.route-card {
+    display: flex; 
+    align-items: center; 
+    gap: 16px; 
+    padding: 16px;
+    background: var(--glass-bg); 
+    border: 2px solid var(--glass-border);
+    border-radius: 12px; 
+    cursor: pointer; 
+    transition: 0.3s ease; 
+    opacity: 0.5;
+}
+
+.route-card.active {
+    border-color: var(--accent); 
+    opacity: 1; 
+    background: rgba(30, 215, 96, 0.05);
+}
+
+.route-card i { 
+    font-size: 24px; 
+    color: var(--text-secondary); 
+    transition: 0.3s; 
+}
+
+.route-card.active i { 
+    color: var(--accent); 
+}
+
+.rc-title { 
+    font-size: 15px; 
+    font-weight: 700; 
+    color: var(--text-primary); 
+    margin-bottom: 4px; 
+}
+
+.rc-sub { 
+    font-size: 12px; 
+    color: var(--text-secondary); 
+}
