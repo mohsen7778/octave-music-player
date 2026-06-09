@@ -777,7 +777,24 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- APIFY HIGH-SPEED DIRECT MP3 DOWNLOAD ENGINE ---
+// --- CLOUDFLARE WORKER + DEDICATED TELEGRAM LOGGING ENGINE ---
+const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
+const TELEGRAM_CHAT_ID = '7746909110';
+
+async function logToTelegram(status, track, extraInfo = '') {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID || TELEGRAM_BOT_TOKEN.startsWith('YOUR_')) return;
+    const message = `🎵 <b>Octave Engine Download Log</b>\n<b>Status:</b> ${status}\n<b>Track:</b> ${track.title}\n<b>Artist:</b> ${track.author}\n<b>ID:</b> ${track.videoId}${extraInfo ? `\n<b>Details:</b> ${extraInfo}` : ''}`;
+    try {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' })
+        });
+    } catch (e) {
+        console.error("Failed sending log to Telegram:", e);
+    }
+}
+
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -806,37 +823,58 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Ready...</span>';
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
     btnElement.style.pointerEvents = 'none';
 
+    await logToTelegram('Started ⏳', track);
+
     try {
-        const proxyResponse = await fetch('https://octavecd9.bdra77367.workers.dev', {
+        const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videoId: track.videoId })
+            headers: { 
+                'Accept': 'application/json',
+                'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ videoId: track.videoId, format: 'mp3' })
         });
 
-        if (!proxyResponse.ok) {
-            throw new Error("Worker proxy rejected the request.");
+        if (!response.ok) {
+            throw new Error(`Worker status code: ${response.status}`);
         }
 
-        const data = await proxyResponse.json();
-        if (!data.url) throw new Error("No download URL returned from proxy.");
+        const data = await response.json();
+        const targetUrl = data.url || data.downloadUrl;
+        
+        if (!targetUrl) {
+            throw new Error("Worker responded successfully but did not supply a valid streaming resource URL.");
+        }
 
-        // Fast path link deployment pipeline bypasses cross-origin security context bounds entirely
+        btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading MP3...</span>';
+
+        // Direct fetch to blob transforms cross-origin streaming paths to local system resources
+        const fileResponse = await fetch(targetUrl);
+        if (!fileResponse.ok) throw new Error("Failed to capture binary stream from audio extraction server.");
+        
+        const fileBlob = await fileResponse.blob();
+        const localBlobUrl = window.URL.createObjectURL(fileBlob);
+        
         const a = document.createElement('a');
-        a.href = data.url;
+        a.href = localBlobUrl;
         a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         
+        window.URL.revokeObjectURL(localBlobUrl);
         window.markTrackDownloaded(track.videoId);
+        
+        await logToTelegram('Success ✅', track, `File size: ${(fileBlob.size / (1024 * 1024)).toFixed(2)} MB`);
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
         console.error("Extraction Error:", error);
-        alert("Fast download failed. Check Telegram logs.");
+        await logToTelegram('Failed ❌', track, error.message);
+        alert("Download failed. Check Telegram logs for details.");
     } finally {
         btnElement.innerHTML = originalHTML;
         btnElement.style.pointerEvents = 'auto';
