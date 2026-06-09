@@ -1,5 +1,5 @@
 // ============================================================
-// app.js — Octave Full Flagship Engine (POLLING MP3 DOWNLOADER)
+// app.js — Octave Full Flagship Engine (RAPIDAPI DIRECT DOWNLOAD)
 // ============================================================
 
 let deferredInstallPrompt;
@@ -778,21 +778,6 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
 
 // --- APIFY MP3 POLLING ENGINE + DEV LOGGING ---
 
-const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
-const TELEGRAM_CHAT_ID = '7746909110';
-
-async function devLog(phase, details = "") {
-    if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.startsWith('YOUR_')) return;
-    const msg = `🐛 <b>DEV LOG</b>\n<b>Phase:</b> ${phase}\n<b>Details:</b> <pre>${window.escapeHTML(typeof details === 'object' ? JSON.stringify(details, null, 2) : details)}</pre>`;
-    try {
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: msg, parse_mode: 'HTML' })
-        });
-    } catch(e) { console.error("Log failed", e); }
-}
-
 window.getDownloadedTracks = () => {
     try {
         return JSON.parse(localStorage.getItem('octave_downloads')) || {};
@@ -821,71 +806,92 @@ window.downloadTrack = async (track, btnElement) => {
     }
 
     const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Initializing...</span>';
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
     btnElement.style.pointerEvents = 'none';
 
-    await devLog("1. INIT", `Starting polling pipeline for: ${track.title}`);
+    // HARDCODED TELEGRAM LOGGER VARIABLES
+    const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
+    const TELEGRAM_CHAT_ID = '7746909110';
 
-    try {
-        // STEP 1: Tell the worker to start the Apify job
-        const startRes = await fetch('https://octavecd9.bdra77367.workers.dev', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: "start", videoId: track.videoId })
-        });
-
-        if (!startRes.ok) throw new Error(`Worker Start Error: HTTP ${startRes.status}`);
-        
-        const startData = await startRes.json();
-        if (!startData.runId) throw new Error("Worker did not return a runId");
-
-        const runId = startData.runId;
-        await devLog("2. JOB_STARTED", `Apify Run ID: ${runId}\nBeginning 4-second polling loop...`);
-
-        // STEP 2: Poll every 4 seconds until the MP3 is ready
-        let isReady = false;
-        let finalUrl = null;
-        let attempts = 0;
-
-        while (!isReady && attempts < 30) { // Max 120 seconds wait time
-            attempts++;
-            btnElement.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Converting (${attempts * 4}s)...</span>`;
-            
-            await new Promise(resolve => setTimeout(resolve, 4000)); // wait 4 seconds
-
-            const checkRes = await fetch('https://octavecd9.bdra77367.workers.dev', {
+    async function devLog(phase, details = "") {
+        if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.startsWith('YOUR_')) return;
+        const msg = `🐛 <b>DEV LOG</b>\n<b>Phase:</b> ${phase}\n<b>Track:</b> ${track.title}\n<b>Details:</b> <pre>${window.escapeHTML(typeof details === 'object' ? JSON.stringify(details, null, 2) : details)}</pre>`;
+        try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: "check", runId: runId })
+                body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: msg, parse_mode: 'HTML' })
             });
+        } catch(e) { console.error("Log failed", e); }
+    }
 
-            const checkData = await checkRes.json();
+    await devLog("1. INIT", "Download button clicked. RapidAPI pipeline starting...");
 
-            if (checkData.status === "SUCCEEDED") {
-                isReady = true;
-                finalUrl = checkData.url;
-                await devLog("3. JOB_FINISHED", `Extracted permanent MP3 URL after ${attempts * 4} seconds.`);
-            } else if (checkData.status === "FAILED") {
-                throw new Error("Apify run failed or timed out on backend.");
-            }
-            // If status is RUNNING, loop continues
+    try {
+        await devLog("2. WORKER_PING", "Sending POST to octavecd9.bdra77367.workers.dev...");
+        
+        const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
+            method: 'POST',
+            headers: { 
+                'Accept': 'application/json',
+                'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ videoId: track.videoId })
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Worker HTTP ${response.status}: ${text}`);
         }
 
-        if (!finalUrl) throw new Error("Timeout: The extraction took too long to complete.");
+        const data = await response.json();
+        await devLog("3. WORKER_RESPONSE", data);
 
-        // STEP 3: Fallback native download trigger
+        const targetUrl = data.url;
+        if (!targetUrl) throw new Error("Worker JSON missing 'url' property.");
+
         btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving MP3...</span>';
-        await devLog("4. NATIVE_DOWNLOAD", "Triggering <a> tag to save the file locally.");
+        
+        await devLog("4. BLOB_FETCH_START", `Fetching MP3 from CoolGuruji API link...`);
 
+        let fileResponse;
+        try {
+            fileResponse = await fetch(targetUrl);
+        } catch (networkError) {
+            await devLog("5. BLOB_FETCH_NETWORK_ERROR", `CORS block detected. Triggering native fallback.`);
+            
+            // CORS BYPASS FALLBACK
+            const a = document.createElement('a');
+            a.href = targetUrl;
+            a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+            a.target = "_blank";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            window.markTrackDownloaded(track.videoId);
+            document.getElementById('track-options-modal').classList.remove('active');
+            return;
+        }
+
+        if (!fileResponse.ok) throw new Error(`RapidAPI CDN HTTP ${fileResponse.status}`);
+        
+        const fileBlob = await fileResponse.blob();
+        await devLog("6. BLOB_GENERATED", `Size: ${(fileBlob.size / 1024 / 1024).toFixed(2)} MB`);
+
+        const localBlobUrl = window.URL.createObjectURL(fileBlob);
+        
         const a = document.createElement('a');
-        a.href = finalUrl;
+        a.href = localBlobUrl;
         a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
-        a.target = "_blank"; // Forces native handler if standard download gets CORS blocked
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         
+        window.URL.revokeObjectURL(localBlobUrl);
         window.markTrackDownloaded(track.videoId);
+        
+        await devLog("7. COMPLETE", "MP3 saved successfully.");
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
@@ -897,6 +903,7 @@ window.downloadTrack = async (track, btnElement) => {
         btnElement.style.pointerEvents = 'auto';
     }
 };
+
 
 document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
     if (window.OCTAVE.activeTrackForOptions) {
