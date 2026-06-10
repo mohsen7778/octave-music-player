@@ -1,6 +1,6 @@
 // ============================================================
 // app.js — Octave Full Flagship Engine (RAPIDAPI DIRECT DOWNLOAD)
-// Rate-Limit Proof Search Engine + Auto-Corrector Active
+// Search Bug Fixed + Cache Nuke Active
 // ============================================================
 
 let deferredInstallPrompt;
@@ -34,6 +34,13 @@ window.addEventListener('beforeinstallprompt', (e) => {
 
 document.addEventListener('DOMContentLoaded', () => {
     
+    // CACHE NUKE: Instantly clears the corrupted gray-box recommendations
+    if (window.OCTAVE) {
+        window.OCTAVE.dailyRecs = { timestamp: 0, tracks: [] };
+        window.OCTAVE.recentSearches = [];
+        window.saveCache();
+    }
+
     const params = new URLSearchParams(window.location.search);
     const shareV = params.get('v');
     if (shareV) {
@@ -205,7 +212,6 @@ document.body.addEventListener('click', async (e) => {
         if (window.renderLikedSongs) window.renderLikedSongs();
     }
 
-    // --- FULL SCREEN ROUTING UI HANDLING ---
     if (e.target.closest('#open-routing-settings')) {
         document.getElementById('side-menu').classList.remove('active');
         document.getElementById('menu-backdrop').classList.remove('active');
@@ -812,6 +818,109 @@ function renderLibrary() {
     });
 }
 
+// --- SEARCH ENGINE COMPLETELY REBUILT ---
+window.searchGlobalId = 0;
+window.activeSearchTimer = null;
+
+window.performSearch = async (query) => {
+    const currentId = ++window.searchGlobalId;
+
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        // Drop the loop instantly if user typed a new letter
+        if (currentId !== window.searchGlobalId) return null; 
+
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000); // Wait 7 seconds max
+        
+        try {
+            // REMOVED "audio" tag to fix queries like "Mask". REMOVED Region locks.
+            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            
+            if (!r.ok) continue;
+            
+            const d = await r.json();
+            
+            // Final check before returning data
+            if (currentId !== window.searchGlobalId) return null;
+
+            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+            
+            // REMOVED STRICT LENGTH LIMITS FOR MANUAL SEARCH! Let the user see everything.
+            return d.filter(item => item.videoId).map(item => ({
+                videoId: item.videoId,
+                title: item.title,
+                author: item.author,
+                thumb: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
+            }));
+        } catch (e) {
+            clearTimeout(timeoutId);
+            continue; // Try next proxy
+        }
+    }
+    return []; // All proxies failed
+};
+
+window.bindSearch = () => {
+    const input = document.getElementById('searchInput');
+    const resContainer = document.getElementById('searchResults');
+    if (!input || !resContainer) return;
+
+    // Destroy duplicate event listeners from tab switching
+    const newElement = input.cloneNode(true);
+    input.parentNode.replaceChild(newElement, input);
+
+    newElement.addEventListener('input', (e) => {
+        clearTimeout(window.activeSearchTimer);
+        const query = e.target.value.trim();
+        
+        // This locks out older fetch loops instantly
+        window.searchGlobalId++; 
+        const mySearchId = window.searchGlobalId;
+        
+        if (!query) { 
+            resContainer.innerHTML = `
+                <div id="search-default-view">
+                    <h3 style="font-size: 16px; margin-bottom: 16px;">Recently Searched</h3>
+                    <div class="vertical-list" id="search-recent-list" style="padding-right: 0;"></div>
+                </div>
+            `;
+            if(window.renderRecentSearches) window.renderRecentSearches(); 
+            return; 
+        }
+        
+        // Wait 800ms to stop typing before hammering the API to prevent Too Many Requests (429) errors
+        window.activeSearchTimer = setTimeout(async () => {
+            resContainer.innerHTML = '<div style="text-align:center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin fa-2x" style="color:var(--accent);"></i></div>';
+            
+            const results = await window.performSearch(query);
+            
+            // SECURITY CHECK: If user typed another letter while waiting, drop these old results!
+            if (mySearchId !== window.searchGlobalId) return; 
+            if (results === null) return; 
+            
+            resContainer.innerHTML = '';
+            
+            if (results.length === 0) {
+                resContainer.innerHTML = '<div class="empty-state-text">No results found for "' + window.escapeHTML(query) + '".</div>';
+                return;
+            }
+            
+            results.slice(0, 15).forEach(track => {
+                const el = document.createElement('div'); el.className = 'list-item';
+                el.innerHTML = `<img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
+                el.addEventListener('click', () => window.playTrack(track));
+                resContainer.appendChild(el);
+            });
+        }, 800);
+    });
+};
+
+// --- END SEARCH ENGINE ---
+
 window.renderRecentSearches = () => {
     const recentList = document.getElementById('search-recent-list');
     if (!recentList) return;
@@ -835,113 +944,6 @@ window.renderRecentSearches = () => {
         recentList.innerHTML = '<div class="empty-state-text" style="padding-top: 10px;">No recent searches yet.</div>';
     }
 }
-
-
-// --- BULLETPROOF SEARCH ENGINE & RACE CONDITION FIX ---
-window.searchGlobalId = 0;
-window.activeSearchTimer = null;
-
-window.performSearch = async (query) => {
-    const currentId = ++window.searchGlobalId;
-    
-    // Auto-inject audio modifier to filter out gaming/vlog junk
-    let searchQuery = query;
-    const qLower = query.toLowerCase();
-    if (!qLower.includes('song') && !qLower.includes('audio') && !qLower.includes('music') && !qLower.includes('remix')) {
-        searchQuery += ' audio'; 
-    }
-
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        // Exit instantly if user typed a new letter during the loop
-        if (currentId !== window.searchGlobalId) return null; 
-
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
-        
-        try {
-            // Re-routed to fetch optimized regional content & bypassed field stripping
-            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(searchQuery)}&type=video&region=IN`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            
-            if (!r.ok) continue;
-            
-            const d = await r.json();
-            
-            // Final check before parsing array
-            if (currentId !== window.searchGlobalId) return null;
-
-            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-            return d.filter(item => item.lengthSeconds && item.lengthSeconds >= 30 && item.lengthSeconds <= 600).map(item => ({
-                videoId: item.videoId,
-                title: item.title,
-                author: item.author,
-                thumb: item.videoId ? `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` : ''
-            }));
-        } catch (e) {
-            clearTimeout(timeoutId);
-            continue;
-        }
-    }
-    return [];
-};
-
-window.bindSearch = () => {
-    const input = document.getElementById('searchInput');
-    const resContainer = document.getElementById('searchResults');
-    if (!input || !resContainer) return;
-
-    // Destroy duplicate listeners safely
-    const newElement = input.cloneNode(true);
-    input.parentNode.replaceChild(newElement, input);
-
-    newElement.addEventListener('input', (e) => {
-        clearTimeout(window.activeSearchTimer);
-        const query = e.target.value.trim();
-        
-        // This locks out older fetch loops instantly
-        window.searchGlobalId++; 
-        const mySearchId = window.searchGlobalId;
-        
-        if (!query) { 
-            resContainer.innerHTML = `
-                <div id="search-default-view">
-                    <h3 style="font-size: 16px; margin-bottom: 16px;">Recently Searched</h3>
-                    <div class="vertical-list" id="search-recent-list" style="padding-right: 0;"></div>
-                </div>
-            `;
-            if(window.renderRecentSearches) window.renderRecentSearches(); 
-            return; 
-        }
-        
-        // Delay increased to 800ms so it doesn't spam APIs while you are still thinking/typing
-        window.activeSearchTimer = setTimeout(async () => {
-            resContainer.innerHTML = '<div style="text-align:center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin fa-2x" style="color:var(--accent);"></i></div>';
-            
-            const results = await window.performSearch(query);
-            
-            // If the user typed another letter while this was loading, ABORT modifying the screen!
-            if (mySearchId !== window.searchGlobalId) return; 
-            if (results === null) return; 
-            
-            resContainer.innerHTML = '';
-            
-            if (results.length === 0) {
-                resContainer.innerHTML = '<div class="empty-state-text">No results found for "' + window.escapeHTML(query) + '".</div>';
-                return;
-            }
-            
-            results.slice(0, 15).forEach(track => {
-                const el = document.createElement('div'); el.className = 'list-item';
-                el.innerHTML = `<img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
-                el.addEventListener('click', () => window.playTrack(track));
-                resContainer.appendChild(el);
-            });
-        }, 800);
-    });
-};
 
 function handleBravePrompt() {
     if (!localStorage.getItem('bravePromptShown')) setTimeout(() => document.getElementById('brave-modal')?.classList.add('active'), 1500);
@@ -1171,44 +1173,23 @@ window.downloadTrack = async (track, btnElement) => {
         }
     }
     
-    // Satisfies browser autoplay rules by starting AudioContext upon real user gesture
-    const initOnGesture = () => {
-        startSilentAudioContext();
-        window.removeEventListener('click', initOnGesture);
-        window.removeEventListener('touchstart', initOnGesture);
-    };
-    window.addEventListener('click', initOnGesture);
-    window.addEventListener('touchstart', initOnGesture);
-    
-    function wrapPlayFunction(originalFn) {
+    function wrapPlayFunction(originalFn, name) {
         if (typeof originalFn !== 'function') return originalFn;
         return function(...args) {
-            startSilentAudioContext();
+            if (!keepAliveStarted) {
+                startSilentAudioContext();
+            }
             return originalFn.apply(this, args);
         };
     }
     
-    // intercepts dynamic function declarations safely
-    let _playTrack = window.playTrack;
-    Object.defineProperty(window, 'playTrack', {
-        get() { return _playTrack; },
-        set(val) { _playTrack = wrapPlayFunction(val); },
-        configurable: true
-    });
-    if (_playTrack) window.playTrack = _playTrack;
-
-    let _playTrackByIndex = window.playTrackByIndex;
-    Object.defineProperty(window, 'playTrackByIndex', {
-        get() { return _playTrackByIndex; },
-        set(val) { _playTrackByIndex = wrapPlayFunction(val); },
-        configurable: true
-    });
-    if (_playTrackByIndex) window.playTrackByIndex = _playTrackByIndex;
+    if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
+    if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
     
     document.addEventListener('visibilitychange', () => {
         if (document.hidden && window.audio && !window.audio.paused) {
             setTimeout(() => {
-                if (window.audio && window.audio.paused) {
+                if (window.audio && !window.audio.paused) {
                     window.audio.play().catch(e => console.warn('Auto-resume failed', e));
                 }
             }, 100);
@@ -1216,29 +1197,27 @@ window.downloadTrack = async (track, btnElement) => {
     });
     
     if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('play', () => {
-            if (window.audio) window.audio.play().catch(e => console.warn('MediaSession play failed', e));
-        });
         navigator.mediaSession.setActionHandler('pause', () => {
-            if (window.audio) window.audio.pause();
+            if (window.audio && !window.audio.paused) {
+                setTimeout(() => window.audio.play().catch(e => console.warn), 50);
+            }
         });
     }
     
     if (window.audio) {
         window.audio.addEventListener('play', () => {
-            startSilentAudioContext();
+            if (!keepAliveStarted) startSilentAudioContext();
         });
     } else {
-        const audioCheckInterval = setInterval(() => {
-            if (window.audio) {
-                if (!window.audio._bgFixAttached) {
-                    window.audio.addEventListener('play', () => {
-                        startSilentAudioContext();
-                    });
-                    window.audio._bgFixAttached = true;
-                }
-                clearInterval(audioCheckInterval);
+        const observer = new MutationObserver(() => {
+            if (window.audio && !window.audio._bgFixAttached) {
+                window.audio.addEventListener('play', () => {
+                    if (!keepAliveStarted) startSilentAudioContext();
+                });
+                window.audio._bgFixAttached = true;
+                observer.disconnect();
             }
-        }, 500);
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
     }
 })();
