@@ -1,7 +1,17 @@
 // ============================================================
 // algorithm.js — Octave Top-Notch Auto-DJ & Prediction Engine
-// Strict Firewall + YouTube CDN Thumbnails
+// Strict Music Firewall + Direct YouTube CDN Images
 // ============================================================
+
+// Failsafe safety net to prevent render crashes if player.js loads out of sync
+if (!window.escapeHTML) {
+    window.escapeHTML = (str) => {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    };
+}
 
 window.calculateTrackScore = (track) => {
     if (!track || !track.videoId) return -100;
@@ -46,13 +56,13 @@ window.fetchAutoDjBatch = async () => {
             topSeeds.push(window.OCTAVE.recentPlayed[0]);
         }
 
-        let candidatePool =[];
+        let candidatePool = [];
 
         // METHOD 1: Fetch recommended videos aggressively across safe instances
         if (topSeeds.length > 0) {
             for (const seed of topSeeds) {
                 for (let i = 0; i < window.INVIDIOUS.length; i++) {
-                    const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+                    const base = window.INVISIOUS || window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
                     try {
                         const controller = new AbortController();
                         const id = setTimeout(() => controller.abort(), 3500); 
@@ -70,7 +80,7 @@ window.fetchAutoDjBatch = async () => {
             }
         }
 
-        // METHOD 2: Robust Fallback -> Use the working Search API for the seed artists
+        // METHOD 2: Use the working Search API for the seed artists
         if (candidatePool.length < 5 && topSeeds.length > 0) {
             for (const seed of topSeeds) {
                 try {
@@ -99,7 +109,7 @@ window.fetchAutoDjBatch = async () => {
             }
         }
 
-        // --- MILITARY-GRADE MUSIC FIREWALL ---
+        // --- MILITARY GRADE MUSIC FILTER ---
         const badWords = [
             'tutorial', 'vlog', 'news', 'podcast', 'interview', 'review', 'unboxing', 
             'live', 'type beat', 'full album', 'documentary', 'short', 'shorts', 
@@ -108,7 +118,7 @@ window.fetchAutoDjBatch = async () => {
         ];
         
         const freshRecs = candidatePool.filter(v => {
-            // STRICT TIME BOUNDS: Must be between 2 minutes (120s) and 7 minutes (420s). Kills shorts & albums.
+            // STRICT TIME BOUNDS: Must be between 2 mins (120s) and 7 mins (420s). Eliminates loops, shorts, and full albums.
             const isMusicLength = v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420; 
             const notPlayedThisSession = !window.OCTAVE.sessionHistory.includes(v.videoId);
             const notPenalized = window.calculateTrackScore({ videoId: v.videoId }) >= -5; 
@@ -116,13 +126,11 @@ window.fetchAutoDjBatch = async () => {
             const titleLower = (v.title || '').toLowerCase();
             const authorLower = (v.author || '').toLowerCase();
             const noBadWords = !badWords.some(bw => titleLower.includes(bw) || authorLower.includes(bw));
-
             const notInQueue = !window.OCTAVE.queue.some(q => q.videoId === v.videoId);
 
             return isMusicLength && notPlayedThisSession && notPenalized && noBadWords && notInQueue;
         });
 
-        // Deduplicate and Randomize
         const uniqueRecs = Array.from(new Map(freshRecs.map(t =>[t.videoId, t])).values());
         uniqueRecs.sort(() => 0.5 - Math.random());
         
@@ -130,7 +138,7 @@ window.fetchAutoDjBatch = async () => {
             videoId: pick.videoId, 
             title: pick.title, 
             author: pick.author,
-            thumb: pick.videoId ? `https://i.ytimg.com/vi/${pick.videoId}/hqdefault.jpg` : pick.thumb
+            thumb: pick.videoId ? `https://i.ytimg.com/vi/${pick.videoId}/hqdefault.jpg` : ''
         }));
 
         if (next5.length > 0) {
@@ -145,7 +153,6 @@ window.fetchAutoDjBatch = async () => {
     }
 };
 
-// Queue Interceptor
 setTimeout(() => {
     if (window.playTrackByIndex) {
         const originalPlayTrackByIndex = window.playTrackByIndex;
@@ -153,7 +160,7 @@ setTimeout(() => {
             originalPlayTrackByIndex(index);
             if (window.OCTAVE.queue.length - index <= 2) {
                 setTimeout(() => {
-                    window.fetchAutoDjBatch();
+                    window.fetchAutoDJBatch();
                 }, 2000);
             }
         };
@@ -219,5 +226,166 @@ window.generateDiscoverMix = async () => {
         alert("Algorithm failed to connect to network. Try again.");
         const homeTab = document.querySelector('.nav-item[data-tab="home"]');
         if (homeTab) homeTab.click(); 
+    }
+};
+
+window.fetchDailyRecommendations = async () => {
+    if (!window.OCTAVE) return;
+    const now = Date.now();
+    const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
+    
+    if (window.OCTAVE.dailyRecs && window.OCTAVE.dailyRecs.tracks && window.OCTAVE.dailyRecs.tracks.length > 0) {
+        const usesBadThumbs = window.OCTAVE.dailyRecs.tracks.some(t => t.thumb && !t.thumb.includes('ytimg.com'));
+        if (!usesBadThumbs && (now - window.OCTAVE.dailyRecs.timestamp < FIVE_DAYS)) return; 
+    }
+    
+    const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
+    const topScored = allKnown.sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a)).slice(0, 10);
+    
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        try {
+            let url = '';
+            if (topScored.length > 0) {
+                const seed = topScored[Math.floor(Math.random() * topScored.length)];
+                url = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
+            } else {
+                url = `${base}/api/v1/popular?videoCategory=10`; 
+            }
+
+            const r = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (r.ok) {
+                const d = await r.json();
+                let newTracks =[];
+
+                if (topScored.length > 0 && d.recommendedVideos) {
+                    newTracks = d.recommendedVideos.filter(v => v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420).slice(0, 10);
+                } else if (topScored.length === 0 && Array.isArray(d)) {
+                    newTracks = d.filter(v => v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420).slice(0, 10);
+                }
+
+                if (newTracks.length > 0) {
+                    window.OCTAVE.dailyRecs = {
+                        timestamp: now,
+                        tracks: newTracks.map(rec => ({
+                            videoId: rec.videoId, title: rec.title, author: rec.author,
+                            thumb: rec.videoId ? `https://i.ytimg.com/vi/${rec.videoId}/hqdefault.jpg` : ''
+                        }))
+                    };
+                    window.saveCache();
+                    const activeTab = document.querySelector('.nav-item.active');
+                    if (activeTab && activeTab.getAttribute('data-tab') === 'home') {
+                        window.renderHome();
+                    }
+                    break;
+                }
+            }
+        } catch(e) { continue; }
+    }
+};
+
+window.fetchTrendingMusic = async () => {
+    const trendingGrid = document.getElementById('home-trending-grid');
+    if (!trendingGrid) return;
+
+    const now = Date.now();
+    const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+
+    if (window.OCTAVE.trendingData && window.OCTAVE.trendingData.tracks && window.OCTAVE.trendingData.tracks.length > 0) {
+        if (now - window.OCTAVE.trendingData.timestamp < THREE_DAYS) {
+            window.renderTrendingTracks(window.OCTAVE.trendingData.tracks, trendingGrid);
+            return;
+        }
+    }
+
+    try {
+        const r = await fetch(`https://itunes.apple.com/us/rss/topsongs/limit=50/json?_t=${Date.now()}`, { cache: 'no-store' });
+        if (r.ok) {
+            const d = await r.json();
+            if (d.feed && d.feed.entry) {
+                const uniqueTracks = new Map();
+
+                d.feed.entry.forEach(entry => {
+                    const title = entry['im:name'].label;
+                    const author = entry['im:artist'].label;
+                    const key = `${title}-${author}`.toLowerCase(); 
+                    
+                    if (!uniqueTracks.has(key)) {
+                        let thumbUrl = '';
+                        if (entry['im:image'] && entry['im:image'].length > 0) {
+                            thumbUrl = entry['im:image'][entry['im:image'].length - 1].label;
+                        }
+                        
+                        uniqueTracks.set(key, {
+                            videoId: null, 
+                            title: title,
+                            author: author,
+                            thumb: thumbUrl
+                        });
+                    }
+                });
+
+                const newTracks = Array.from(uniqueTracks.values());
+
+                if (newTracks.length > 0) {
+                    window.OCTAVE.trendingData = {
+                        timestamp: now,
+                        tracks: newTracks
+                    };
+                    window.saveCache();
+                    window.renderTrendingTracks(newTracks, trendingGrid);
+                }
+            }
+        }
+    } catch(e) { 
+        trendingGrid.innerHTML = '<div class="empty-state-text">Failed to load charts.</div>';
+    }
+};
+
+window.renderTrendingTracks = (tracks, container) => {
+    container.innerHTML = '';
+    tracks.forEach(track => {
+        const el = document.createElement('div');
+        el.className = 'square-card';
+        el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${track.thumb}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
+        
+        el.addEventListener('click', async () => {
+            if (!track.videoId) {
+                el.style.opacity = '0.5'; 
+                const query = `${track.author} ${track.title} audio`;
+                const results = await window.performSearch(query);
+                el.style.opacity = '1';
+                
+                if (results && results.length > 0) {
+                    track.videoId = results[0].videoId;
+                    window.saveCache(); 
+                    window.playTrack(track);
+                } else {
+                    alert("Could not find an audio stream for this track.");
+                }
+            } else {
+                window.playTrack(track);
+            }
+        });
+        
+        container.appendChild(el);
+    });
+};
+
+window.smartShufflePlaylist = (plName) => {
+    const pl = window.OCTAVE.playlists[plName];
+    if (pl && pl.length > 0) {
+        let sorted = [...pl].sort((a, b) => {
+            const countA = window.calculateTrackScore(a);
+            const countB = window.calculateTrackScore(b);
+            if (countB !== countA) return countB - countA;
+            return 0.5 - Math.random(); 
+        });
+        window.OCTAVE.queue = sorted; 
+        window.OCTAVE.isNextTrackManual = true;
+        window.playTrackByIndex(0);
     }
 };
