@@ -33,14 +33,16 @@ window.OCTAVE = {
     nextTrackPreloaded: false 
 };
 
-// Defaulting to Hybrid IFrame Engine to secure background privileges
-window.AUDIO_ENGINE = 'iframe'; 
-let activeEngine = 'iframe'; 
+// Use native browser audio engine for Chrome/Safari to support background playback natively
+window.AUDIO_ENGINE = 'native'; 
+let activeEngine = 'native'; 
 
 if (navigator.brave) {
+    window.AUDIO_ENGINE = 'iframe';
+    activeEngine = 'iframe';
     console.log("Octave Brave detected - Using Instant IFrame Engine");
 } else {
-    console.log("Octave Chrome/Safari detected - Enabled Hybrid IFrame Engine for secure stream playback");
+    console.log("Octave Chrome/Safari detected - Enabled Native Engine to secure background playback");
 }
 
 window.initTrackStats = (videoId) => {
@@ -145,6 +147,7 @@ window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
+window.audio = AUDIO; // Bound globally to allow visibility and keep-alive handlers to track stream state
 
 const PRELOAD_AUDIO = new Audio(); 
 PRELOAD_AUDIO.preload = 'auto';
@@ -172,7 +175,7 @@ document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
 function getStreamUrl(videoId) {
     const base = window.INVIDIOUS[window.invIdx];
-    // local=true forces the Invidious instance to proxy bytes, bypassing raw 403 CDN blocks
+    // local=true proxies the streaming bytes from Invidious, preventing 403 blocks on Chrome
     return `${base}/latest_version?id=${videoId}&itag=140&local=true`;
 }
 
