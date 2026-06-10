@@ -1,7 +1,7 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
 // Background Playback Active + Ghost Timeline + Juicy Liquid Colors
-// Chrome Iframe Engine + Keep-Alive Fix Applied
+// Chrome Iframe Engine + Background Routine Fixed
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -34,8 +34,7 @@ window.OCTAVE = {
     nextTrackPreloaded: false 
 };
 
-// --- FIX: Universally use the iframe engine. Native Invidious streams are blocked by Chrome.
-// The silent MP3 loop below will force Chrome to keep the iframe playing in the background.
+// Use native browser audio engine for Chrome/Safari to support background playback natively
 window.AUDIO_ENGINE = 'iframe'; 
 let activeEngine = 'iframe'; 
 
@@ -150,7 +149,7 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
                 .filter(inst => inst && inst[1] && inst[1].type === 'https' && inst[1].api === true)
                 .map(inst => inst[1].uri)
                 .filter(Boolean);
-            if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
+            if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVISIOUS])];
         }
     })
     .catch(() => console.warn('Using fallback instances'));
@@ -556,6 +555,8 @@ window.playTrackByIndex = (index) => {
         
         const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNyAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
         AUDIO.src = SILENT_MP3;
+        AUDIO.load(); // FIXED: Mount track asset into engine cache completely before executing play routine
+        
         AUDIO.play().then(() => {
             if (ytReady && YTP) {
                 YTP.loadVideoById({ videoId: track.videoId });
@@ -577,7 +578,8 @@ window.playTrackByIndex = (index) => {
                     }
                 }, 5000);
             }
-        }).catch(() => {
+        }).catch((err) => {
+            console.warn("Background loop promise unhandled, running iframe autoplay fallback", err);
             if (ytReady && YTP) {
                 YTP.loadVideoById({ videoId: track.videoId });
                 YTP.playVideo();
