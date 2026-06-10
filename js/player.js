@@ -186,6 +186,61 @@ try {
     document.addEventListener('click', unlockAudioEngine, { once: true });
     document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
+    // --- CHROME KEEP-ALIVE ENGINE CONFIGURATION ---
+    let silentAudioCtx = null;
+    let keepAliveStarted = false;
+
+    function startSilentAudioContext() {
+        if (silentAudioCtx && silentAudioCtx.state === 'running') return;
+        const AudioCtor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtor) return;
+        try {
+            silentAudioCtx = new AudioCtor();
+            const buffer = silentAudioCtx.createBuffer(1, 1, 22050);
+            const source = silentAudioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.loop = true;
+            source.connect(silentAudioCtx.destination);
+            source.start();
+            silentAudioCtx.resume().catch(e => console.warn('Silent ctx resume failed', e));
+            keepAliveStarted = true;
+        } catch (e) {
+            console.warn('Silent AudioContext failed', e);
+        }
+    }
+
+    const initOnGesture = () => {
+        startSilentAudioContext();
+        window.removeEventListener('click', initOnGesture);
+        window.removeEventListener('touchstart', initOnGesture);
+    };
+    document.addEventListener('click', initOnGesture, { capture: true, passive: true });
+    document.addEventListener('touchstart', initOnGesture, { capture: true, passive: true });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && window.audio && !window.audio.paused) {
+            setTimeout(() => {
+                if (window.audio && window.audio.paused) {
+                    window.audio.play().catch(e => console.warn('Auto-resume failed', e));
+                }
+            }, 100);
+        }
+    });
+
+    AUDIO.addEventListener('play', () => {
+        startSilentAudioContext();
+    });
+
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('play', () => {
+            if (window.audio) window.audio.play().catch(e => console.warn('MediaSession play failed', e));
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+            if (window.audio) window.audio.pause();
+        });
+    }
+    // --- END KEEP-ALIVE CONFIGURATION ---
+
     function getStreamUrl(videoId) {
         const base = window.INVIDIOUS[window.invIdx];
         return `${base}/latest_version?id=${videoId}&itag=140&local=true`;
@@ -499,6 +554,8 @@ try {
         if (index < 0 || index >= window.OCTAVE.queue.length) return;
         const track = window.OCTAVE.queue[index];
 
+        startSilentAudioContext(); // Activates Chrome background thread execution synchronously on gesture path
+
         window.OCTAVE.isTransitioning = true;
         window.OCTAVE.nextTrackPreloaded = false;
         setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 4000); 
@@ -593,6 +650,7 @@ try {
 
     window.playTrack = (track) => {
         if (window.OCTAVE.isTransitioning) return; 
+        startSilentAudioContext(); // Secure background thread natively on foreground action
         window.OCTAVE.isNextTrackManual = true; 
         window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
         const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
@@ -1077,43 +1135,4 @@ try {
             
             document.getElementById('mini-like-btn')?.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
-            });
-            
-            document.getElementById('fp-like')?.addEventListener('click', () => {
-                if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
-            });
-            
-            const fpProgContainer = document.getElementById('fp-progress-container');
-            if (fpProgContainer) {
-                const handleScrubStart = (e) => {
-                    window.OCTAVE.isDraggingProgress = true;
-                    seekToPosition(e, fpProgContainer, false);
-                };
-                const handleScrubMove = (e) => {
-                    if (!window.OCTAVE.isDraggingProgress) return;
-                    if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); 
-                    seekToPosition(e, fpProgContainer, false);
-                };
-                const handleScrubEnd = (e) => {
-                    if (!window.OCTAVE.isDraggingProgress) return;
-                    window.OCTAVE.isDraggingProgress = false;
-                    seekToPosition(e, fpProgContainer, true);
-                };
-
-                fpProgContainer.addEventListener('mousedown', handleScrubStart);
-                document.addEventListener('mousemove', handleScrubMove, { passive: false });
-                document.addEventListener('mouseup', handleScrubEnd);
-                
-                fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
-                document.addEventListener('touchmove', handleScrubMove, { passive: false });
-                document.addEventListener('touchend', handleScrubEnd);
-            }
-        } catch (domErr) {
-            console.warn("Recovered from DOMContentLoaded error inside player.js", domErr);
-        }
-    });
-
-} catch (globalErr) {
-    console.error("Critical error inside player.js global scope blocked:", globalErr);
-}
+                if (window.OCTAVE.currentInde
