@@ -1171,23 +1171,44 @@ window.downloadTrack = async (track, btnElement) => {
         }
     }
     
-    function wrapPlayFunction(originalFn, name) {
+    // Satisfies browser autoplay rules by starting AudioContext upon real user gesture
+    const initOnGesture = () => {
+        startSilentAudioContext();
+        window.removeEventListener('click', initOnGesture);
+        window.removeEventListener('touchstart', initOnGesture);
+    };
+    window.addEventListener('click', initOnGesture);
+    window.addEventListener('touchstart', initOnGesture);
+    
+    function wrapPlayFunction(originalFn) {
         if (typeof originalFn !== 'function') return originalFn;
         return function(...args) {
-            if (!keepAliveStarted) {
-                startSilentAudioContext();
-            }
+            startSilentAudioContext();
             return originalFn.apply(this, args);
         };
     }
     
-    if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
-    if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
+    // intercepts dynamic function declarations safely
+    let _playTrack = window.playTrack;
+    Object.defineProperty(window, 'playTrack', {
+        get() { return _playTrack; },
+        set(val) { _playTrack = wrapPlayFunction(val); },
+        configurable: true
+    });
+    if (_playTrack) window.playTrack = _playTrack;
+
+    let _playTrackByIndex = window.playTrackByIndex;
+    Object.defineProperty(window, 'playTrackByIndex', {
+        get() { return _playTrackByIndex; },
+        set(val) { _playTrackByIndex = wrapPlayFunction(val); },
+        configurable: true
+    });
+    if (_playTrackByIndex) window.playTrackByIndex = _playTrackByIndex;
     
     document.addEventListener('visibilitychange', () => {
         if (document.hidden && window.audio && !window.audio.paused) {
             setTimeout(() => {
-                if (window.audio && !window.audio.paused) {
+                if (window.audio && window.audio.paused) {
                     window.audio.play().catch(e => console.warn('Auto-resume failed', e));
                 }
             }, 100);
@@ -1195,27 +1216,29 @@ window.downloadTrack = async (track, btnElement) => {
     });
     
     if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('play', () => {
+            if (window.audio) window.audio.play().catch(e => console.warn('MediaSession play failed', e));
+        });
         navigator.mediaSession.setActionHandler('pause', () => {
-            if (window.audio && !window.audio.paused) {
-                setTimeout(() => window.audio.play().catch(e => console.warn), 50);
-            }
+            if (window.audio) window.audio.pause();
         });
     }
     
     if (window.audio) {
         window.audio.addEventListener('play', () => {
-            if (!keepAliveStarted) startSilentAudioContext();
+            startSilentAudioContext();
         });
     } else {
-        const observer = new MutationObserver(() => {
-            if (window.audio && !window.audio._bgFixAttached) {
-                window.audio.addEventListener('play', () => {
-                    if (!keepAliveStarted) startSilentAudioContext();
-                });
-                window.audio._bgFixAttached = true;
-                observer.disconnect();
+        const audioCheckInterval = setInterval(() => {
+            if (window.audio) {
+                if (!window.audio._bgFixAttached) {
+                    window.audio.addEventListener('play', () => {
+                        startSilentAudioContext();
+                    });
+                    window.audio._bgFixAttached = true;
+                }
+                clearInterval(audioCheckInterval);
             }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
+        }, 500);
     }
 })();
