@@ -449,7 +449,6 @@ window.playTrackByIndex = (index) => {
     window.OCTAVE.nextTrackPreloaded = false;
     setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 4000); 
 
-    // ---> KILL GHOST INTERVAL AND WIPE TIMELINE INSTANTLY <---
     clearInterval(progressTimer);
     window.OCTAVE.isPlaying = false;
     try {
@@ -460,7 +459,6 @@ window.playTrackByIndex = (index) => {
 
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
     
-    // Instantly reset the DOM progress UI so nothing lingers visually 
     const miniProg = document.getElementById('mini-progress');
     const fpProg = document.getElementById('fp-progress-fill');
     const currTime = document.getElementById('fp-time-current');
@@ -611,12 +609,11 @@ window.applyLiquidShadow = (imageSrc) => {
             const h = img.height;
             const sampleSize = 5;
             
-            // Sample from 4 distinct spread points
             const points = [
-                { x: Math.floor(w / 2), y: Math.floor(h / 2) },           // Center
-                { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },        // Top Middle
-                { x: Math.floor(w * 0.85), y: Math.floor(h * 0.85) },     // Bottom Right
-                { x: Math.floor(w * 0.15), y: Math.floor(h * 0.85) }      // Bottom Left
+                { x: Math.floor(w / 2), y: Math.floor(h / 2) },           
+                { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },        
+                { x: Math.floor(w * 0.85), y: Math.floor(h * 0.85) },     
+                { x: Math.floor(w * 0.15), y: Math.floor(h * 0.85) }      
             ];
 
             let r = 0, g = 0, b = 0, count = 0;
@@ -644,22 +641,17 @@ window.applyLiquidShadow = (imageSrc) => {
                 r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
             }
 
-            // --- JUICY BLEND ALGORITHM (Unfade by ~30%) ---
-            
-            // 1. Boost Saturation: Pushes colors away from gray so mixed colors don't look muddy
             let gray = (r + g + b) / 3;
             r = r + (r - gray) * 0.4; 
             g = g + (g - gray) * 0.4;
             b = b + (b - gray) * 0.4;
             
-            // 2. Boost Brightness: Multiplies intensity to make it pop, capping at 255
             r = Math.min(255, Math.max(0, Math.floor(r * 1.2)));
             g = Math.min(255, Math.max(0, Math.floor(g * 1.2)));
             b = Math.min(255, Math.max(0, Math.floor(b * 1.2)));
 
             const fpPlayer = document.getElementById('full-player');
             if (fpPlayer) {
-                // Increased opacity layers (e.g. 0.9, 0.8, 0.7) to unfade the gradient itself
                 fpPlayer.style.background = `
                     radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.9) 0%, transparent 40%),
                     radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.8) 0%, transparent 40%),
@@ -677,7 +669,6 @@ window.applyLiquidShadow = (imageSrc) => {
 
             const mini = document.querySelector('.mini-player');
             if (mini) {
-                // Unfaded mini player opacity from 0.3 to 0.45
                 mini.style.background = `radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.45) 0%, transparent 70%), var(--glass-bg)`;
                 mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 15px rgba(${r}, ${g}, ${b}, 0.45)`;
             }
@@ -794,7 +785,8 @@ window.performSearch = async (query) => {
                 videoId: item.videoId,
                 title: item.title,
                 author: item.author,
-                thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+                // DIRECT YOUTUBE IMAGE SERVER FIX
+                thumb: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
             }));
         } catch (e) {
             continue;
@@ -935,7 +927,8 @@ window.fetchFullArtistProfile = async (artist) => {
                         videoId: item.videoId,
                         title: item.title,
                         author: item.author,
-                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+                        // DIRECT YOUTUBE IMAGE SERVER FIX
+                        thumb: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
                     }));
                     window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
                     break;
