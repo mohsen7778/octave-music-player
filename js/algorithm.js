@@ -352,23 +352,8 @@ window.renderTrendingTracks = (tracks, container) => {
         el.className = 'square-card';
         el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${track.thumb}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
         
-        el.addEventListener('click', async () => {
-            if (!track.videoId) {
-                el.style.opacity = '0.5'; 
-                const query = `${track.author} ${track.title} audio`;
-                const results = await window.performSearch(query);
-                el.style.opacity = '1';
-                
-                if (results && results.length > 0) {
-                    track.videoId = results[0].videoId;
-                    window.saveCache(); 
-                    window.playTrack(track);
-                } else {
-                    alert("Could not find an audio stream for this track.");
-                }
-            } else {
-                window.playTrack(track);
-            }
+        el.addEventListener('click', () => {
+            window.playTrack(track); // FIX: Send directly to player without waiting for background fetch
         });
         
         container.appendChild(el);
