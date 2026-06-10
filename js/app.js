@@ -56,6 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // PWA LAG FIX: Changed 2000ms delay to 100ms instant clear
     setTimeout(() => {
         const splash = document.getElementById('splash-screen');
         if (splash) {
@@ -821,6 +822,33 @@ function renderRecentSearches() {
     }
 }
 
+// IMAGE BYPASS: Force YouTube Image CDN for standard search
+window.performSearch = async (query) => {
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        try {
+            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            if (!r.ok) continue;
+            const d = await r.json();
+            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
+                videoId: item.videoId,
+                title: item.title,
+                author: item.author,
+                thumb: item.videoId ? `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` : ''
+            }));
+        } catch (e) {
+            continue;
+        }
+    }
+    return[];
+};
+
 function bindSearch() {
     const input = document.getElementById('searchInput');
     const resContainer = document.getElementById('searchResults');
@@ -952,7 +980,6 @@ window.downloadTrack = async (track, btnElement) => {
     btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
     btnElement.style.pointerEvents = 'none';
 
-    // HARDCODED TELEGRAM LOGGER VARIABLES (Developer bot)
     const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
     const TELEGRAM_CHAT_ID = '7746909110';
 
@@ -993,7 +1020,6 @@ window.downloadTrack = async (track, btnElement) => {
         const targetUrl = data.url;
         if (!targetUrl) throw new Error("Worker JSON missing 'url' property.");
 
-        // --- NEW ISOLATED ROUTING DELIVERY LOGIC ---
         const routeMode = localStorage.getItem('octave_routing_mode') || 'local';
         const userTgToken = localStorage.getItem('octave_tg_token');
         const userChatId = localStorage.getItem('octave_tg_chat_id');
@@ -1001,13 +1027,11 @@ window.downloadTrack = async (track, btnElement) => {
 
         let tgSuccess = false;
 
-        // 1. ATTEMPT TELEGRAM DELIVERY FIRST (If Enabled)
         if ((routeMode === 'telegram' || routeMode === 'both') && userTgToken && userChatId) {
             btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Sending TG...</span>';
             await devLog("4. TG_DELIVERY", "Instructing Telegram to fetch URL directly (CORS Bypass)...");
             
             try {
-                // We pass the URL directly to Telegram. Their servers download it instantly.
                 const tgRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendAudio?chat_id=${userChatId}&audio=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(track.title)}&performer=${encodeURIComponent(track.author)}`);
                 
                 if (tgRes.ok) {
@@ -1035,7 +1059,6 @@ window.downloadTrack = async (track, btnElement) => {
             }
         }
 
-        // 2. ATTEMPT LOCAL DELIVERY (If Enabled, OR if Telegram Failed)
         if (routeMode === 'local' || routeMode === 'both' || (routeMode === 'telegram' && !tgSuccess)) {
             btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving Local...</span>';
             await devLog("5. LOCAL_DOWNLOAD", "Attempting local device download...");
@@ -1053,7 +1076,6 @@ window.downloadTrack = async (track, btnElement) => {
                 document.body.removeChild(a);
                 window.URL.revokeObjectURL(localBlobUrl);
             } catch (networkError) {
-                // If it hits CORS, we gracefully fallback to native link click ONLY for the local file.
                 await devLog("5.5 LOCAL_CORS_FALLBACK", `CORS block detected. Triggering native fallback.`);
                 const a = document.createElement('a');
                 a.href = targetUrl;
@@ -1153,7 +1175,7 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
 });
 
 // ============================================================
-// CHROME BACKGROUND PLAYBACK FIXES (doesn't affect Brave)
+// CHROME BACKGROUND PLAYBACK FIXES
 // ============================================================
 (function() {
     let isBrave = false;
