@@ -33,7 +33,6 @@ window.OCTAVE = {
     nextTrackPreloaded: false 
 };
 
-// Use iframe engine as the baseline to ensure search and playback connectivity
 window.AUDIO_ENGINE = 'iframe'; 
 let activeEngine = 'iframe'; 
 
@@ -329,7 +328,7 @@ function handleTrackEnded() {
         window.saveCache();
     }
     if (window.playNextLogic) window.playNextLogic();
-}
+};
 
 window.playNextLogic = () => {
     if (window.OCTAVE.isTransitioning) return; 
