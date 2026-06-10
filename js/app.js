@@ -1,6 +1,6 @@
 // ============================================================
 // app.js — Octave Full Flagship Engine (RAPIDAPI DIRECT DOWNLOAD)
-// Search Lock Bug Fixed Successfully
+// Rebuilt Bulletproof Search Engine Active
 // ============================================================
 
 let deferredInstallPrompt;
@@ -34,7 +34,6 @@ window.addEventListener('beforeinstallprompt', (e) => {
 
 document.addEventListener('DOMContentLoaded', () => {
     
-    // CACHE NUKE: Instantly clears the corrupted gray-box recommendations
     if (window.OCTAVE) {
         window.OCTAVE.dailyRecs = { timestamp: 0, tracks: [] };
         window.OCTAVE.recentSearches = [];
@@ -435,7 +434,7 @@ CRITICAL RULES:
             const artist = parts[1].trim();
             if(!title || !artist) continue;
 
-            const results = await window.performSearch(`${title} ${artist} audio`);
+            const results = await window.performSearch(`${title} ${artist}`);
             if (results && results.length > 0) playableTracks.push(results[0]);
         }
 
@@ -818,89 +817,6 @@ function renderLibrary() {
     });
 }
 
-// --- SEARCH ENGINE REBUILT ---
-window.activeSearchTimer = null;
-
-window.performSearch = async (query) => {
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        
-        try {
-            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            
-            if (!r.ok) continue;
-            
-            const d = await r.json();
-            
-            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-            
-            return d.filter(item => item.videoId).map(item => ({
-                videoId: item.videoId,
-                title: item.title,
-                author: item.author,
-                thumb: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
-            }));
-        } catch (e) {
-            clearTimeout(timeoutId);
-            continue;
-        }
-    }
-    return [];
-};
-
-window.bindSearch = () => {
-    const input = document.getElementById('searchInput');
-    const resContainer = document.getElementById('searchResults');
-    if (!input || !resContainer) return;
-
-    const newElement = input.cloneNode(true);
-    input.parentNode.replaceChild(newElement, input);
-
-    newElement.addEventListener('input', (e) => {
-        clearTimeout(window.activeSearchTimer);
-        const query = e.target.value.trim();
-        
-        if (!query) { 
-            resContainer.innerHTML = `
-                <div id="search-default-view">
-                    <h3 style="font-size: 16px; margin-bottom: 16px;">Recently Searched</h3>
-                    <div class="vertical-list" id="search-recent-list" style="padding-right: 0;"></div>
-                </div>
-            `;
-            if(window.renderRecentSearches) window.renderRecentSearches(); 
-            return; 
-        }
-        
-        window.activeSearchTimer = setTimeout(async () => {
-            resContainer.innerHTML = '<div style="text-align:center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin fa-2x" style="color:var(--accent);"></i></div>';
-            
-            const results = await window.performSearch(query);
-            
-            if (newElement.value.trim() !== query) return;
-            
-            resContainer.innerHTML = '';
-            
-            if (!results || results.length === 0) {
-                resContainer.innerHTML = '<div class="empty-state-text">No results found for "' + window.escapeHTML(query) + '".</div>';
-                return;
-            }
-            
-            results.slice(0, 15).forEach(track => {
-                const el = document.createElement('div'); el.className = 'list-item';
-                el.innerHTML = `<img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
-                el.addEventListener('click', () => window.playTrack(track));
-                resContainer.appendChild(el);
-            });
-        }, 800);
-    });
-};
-// --- END SEARCH ENGINE ---
-
 window.renderRecentSearches = () => {
     const recentList = document.getElementById('search-recent-list');
     if (!recentList) return;
@@ -924,6 +840,97 @@ window.renderRecentSearches = () => {
         recentList.innerHTML = '<div class="empty-state-text" style="padding-top: 10px;">No recent searches yet.</div>';
     }
 }
+
+// --- SEARCH ENGINE REBUILT ---
+window.searchSessionId = 0;
+window.activeSearchTimer = null;
+
+window.performSearch = async (query) => {
+    const currentId = window.searchSessionId;
+
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        if (currentId !== window.searchSessionId) return null; 
+
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); 
+        
+        try {
+            // FIXED: Added fields parameter back to make payload extremely tiny and prevent crash/timeout
+            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            
+            if (!r.ok) continue;
+            
+            const d = await r.json();
+            if (currentId !== window.searchSessionId) return null;
+            if (!Array.isArray(d)) continue;
+
+            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+            
+            return d.filter(item => item.videoId).map(item => ({
+                videoId: item.videoId,
+                title: item.title,
+                author: item.author,
+                thumb: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
+            }));
+        } catch (e) {
+            clearTimeout(timeoutId);
+            continue;
+        }
+    }
+    return [];
+};
+
+window.bindSearch = () => {
+    const input = document.getElementById('searchInput');
+    const resContainer = document.getElementById('searchResults');
+    if (!input || !resContainer) return;
+
+    // FIXED: Preserves mobile focus by removing form-cloning entirely
+    input.oninput = (e) => {
+        clearTimeout(window.activeSearchTimer);
+        const query = e.target.value.trim();
+        
+        const mySearchId = ++window.searchSessionId; 
+        
+        if (!query) { 
+            resContainer.innerHTML = `
+                <div id="search-default-view">
+                    <h3 style="font-size: 16px; margin-bottom: 16px;">Recently Searched</h3>
+                    <div class="vertical-list" id="search-recent-list" style="padding-right: 0;"></div>
+                </div>
+            `;
+            if(window.renderRecentSearches) window.renderRecentSearches(); 
+            return; 
+        }
+        
+        window.activeSearchTimer = setTimeout(async () => {
+            resContainer.innerHTML = '<div style="text-align:center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin fa-2x" style="color:var(--accent);"></i></div>';
+            
+            const results = await window.performSearch(query);
+            
+            if (mySearchId !== window.searchSessionId) return; 
+            
+            resContainer.innerHTML = '';
+            
+            if (!results || results.length === 0) {
+                resContainer.innerHTML = '<div class="empty-state-text">No results found for "' + window.escapeHTML(query) + '".</div>';
+                return;
+            }
+            
+            results.slice(0, 15).forEach(track => {
+                const el = document.createElement('div'); el.className = 'list-item';
+                el.innerHTML = `<img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
+                el.addEventListener('click', () => window.playTrack(track));
+                resContainer.appendChild(el);
+            });
+        }, 600);
+    });
+};
+// --- END SEARCH ENGINE ---
 
 function handleBravePrompt() {
     if (!localStorage.getItem('bravePromptShown')) setTimeout(() => document.getElementById('brave-modal')?.classList.add('active'), 1500);
