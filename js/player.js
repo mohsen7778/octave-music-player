@@ -328,7 +328,7 @@ function handleTrackEnded() {
         window.saveCache();
     }
     if (window.playNextLogic) window.playNextLogic();
-};
+}
 
 window.playNextLogic = () => {
     if (window.OCTAVE.isTransitioning) return; 
@@ -461,7 +461,7 @@ function syncMediaSessionPosition() {
     }
 }
 
-window.playTrackByIndex = async (index) => {
+window.playTrackByIndex = (index) => {
     if (window.OCTAVE.isTransitioning) return; 
     
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
@@ -490,33 +490,6 @@ window.playTrackByIndex = async (index) => {
     if (currTime) currTime.textContent = "0:00";
     if (totTime) totTime.textContent = "0:00";
     
-    updatePlayerUI(track);
-
-    if (!track.videoId) {
-        try {
-            const query = `${track.author} ${track.title} audio`;
-            const results = await window.performSearch(query);
-            if (results && results.length > 0) {
-                track.videoId = results[0].videoId;
-                if (!track.thumb || track.thumb.includes('mzstatic') || track.thumb.includes('apple.com')) {
-                    track.thumb = results[0].thumb; 
-                    updatePlayerUI(track);
-                }
-                window.saveCache();
-            } else {
-                alert("Could not find an audio stream for this track.");
-                updatePlayIcons('fa-solid fa-play');
-                window.OCTAVE.isTransitioning = false;
-                return;
-            }
-        } catch (e) {
-            alert("Network error resolving track.");
-            updatePlayIcons('fa-solid fa-play');
-            window.OCTAVE.isTransitioning = false;
-            return;
-        }
-    }
-
     const hour = new Date().getHours();
     let tod = 'night';
     if (hour >= 5 && hour < 12) tod = 'morning';
