@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
             splash.style.visibility = 'hidden';
             setTimeout(() => splash.remove(), 600);
         }
-    }, 2000);
+    }, 100);
 
     const dynamicView = document.getElementById('dynamic-view');
     const views = {
