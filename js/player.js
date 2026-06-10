@@ -55,41 +55,50 @@ window.initTrackStats = (videoId) => {
 };
 
 window.saveCache = () => {
-    localStorage.setItem('octave_data', JSON.stringify({
-        liked: window.OCTAVE.liked,
-        playlists: window.OCTAVE.playlists,
-        recentPlayed: window.OCTAVE.recentPlayed.slice(0, 30),
-        recentSearches: window.OCTAVE.recentSearches.slice(0, 30),
-        playStats: window.OCTAVE.playStats, 
-        queue: window.OCTAVE.queue,
-        currentIndex: window.OCTAVE.currentIndex,
-        dailyRecs: window.OCTAVE.dailyRecs,
-        trendingData: window.OCTAVE.trendingData,
-        artistCache: window.OCTAVE.artistCache
-    }));
+    try {
+        const dataToSave = {
+            liked: window.OCTAVE.liked || {},
+            playlists: window.OCTAVE.playlists || {},
+            recentPlayed: Array.isArray(window.OCTAVE.recentPlayed) ? window.OCTAVE.recentPlayed.slice(0, 30) : [],
+            recentSearches: Array.isArray(window.OCTAVE.recentSearches) ? window.OCTAVE.recentSearches.slice(0, 30) : [],
+            playStats: window.OCTAVE.playStats || {}, 
+            queue: window.OCTAVE.queue || [],
+            currentIndex: window.OCTAVE.currentIndex !== undefined ? window.OCTAVE.currentIndex : -1,
+            dailyRecs: window.OCTAVE.dailyRecs || { timestamp: 0, tracks:[] },
+            trendingData: window.OCTAVE.trendingData || { timestamp: 0, tracks:[] },
+            artistCache: window.OCTAVE.artistCache || {}
+        };
+        localStorage.setItem('octave_data', JSON.stringify(dataToSave));
+    } catch (e) {
+        console.warn("Failed to write Cache:", e);
+    }
 };
 
 function loadCache() {
-    const data = localStorage.getItem('octave_data');
-    if (data) {
-        const parsed = JSON.parse(data);
-        window.OCTAVE.liked = parsed.liked || {};
-        window.OCTAVE.playlists = parsed.playlists || {};
-        window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
-        window.OCTAVE.recentSearches = parsed.recentSearches ||[];
-        
-        window.OCTAVE.playStats = parsed.playStats || {};
-        Object.keys(window.OCTAVE.playStats).forEach(key => {
-            if (typeof window.OCTAVE.playStats[key] === 'number') {
-                window.OCTAVE.playStats[key] = { plays: window.OCTAVE.playStats[key], skips: 0, completes: 0, manual: 0, activeViews: 0, lastPlayedTimeOfDay: '' };
-            }
-        });
+    try {
+        const data = localStorage.getItem('octave_data');
+        if (data) {
+            const parsed = JSON.parse(data);
+            window.OCTAVE.liked = parsed.liked || {};
+            window.OCTAVE.playlists = parsed.playlists || {};
+            window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
+            window.OCTAVE.recentSearches = parsed.recentSearches ||[];
+            
+            window.OCTAVE.playStats = parsed.playStats || {};
+            Object.keys(window.OCTAVE.playStats).forEach(key => {
+                if (typeof window.OCTAVE.playStats[key] === 'number') {
+                    window.OCTAVE.playStats[key] = { plays: window.OCTAVE.playStats[key], skips: 0, completes: 0, manual: 0, activeViews: 0, lastPlayedTimeOfDay: '' };
+                }
+            });
 
-        window.OCTAVE.queue = parsed.queue ||[];
-        window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
-        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks:[] };
-        window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks:[] };
-        window.OCTAVE.artistCache = parsed.artistCache || {};
+            window.OCTAVE.queue = parsed.queue ||[];
+            window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
+            window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks:[] };
+            window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks:[] };
+            window.OCTAVE.artistCache = parsed.artistCache || {};
+        }
+    } catch (e) {
+        console.warn("Failed to load cache:", e);
     }
 }
 loadCache();
@@ -136,10 +145,13 @@ window.INVIDIOUS =[
 fetch('https://api.invidious.io/instances.json?sort_by=health')
     .then(res => res.json())
     .then(data => {
-        const healthy = data
-            .filter(inst => inst[1].type === 'https' && inst[1].api === true)
-            .map(inst => inst[1].uri);
-        if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
+        if (Array.isArray(data)) {
+            const healthy = data
+                .filter(inst => inst && inst[1] && inst[1].type === 'https' && inst[1].api === true)
+                .map(inst => inst[1].uri)
+                .filter(Boolean);
+            if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
+        }
     })
     .catch(() => console.warn('Using fallback instances'));
 
@@ -263,9 +275,11 @@ AUDIO.addEventListener('error', () => {
 let YTP = null;
 let ytReady = false;
 
-// Create container off-screen to prevent Chrome's rendering thread from freezing/throttling invisible frames
+// Safe wrapper to prevent crashing threads when document.body is parsing
 const initIframeContainer = () => {
     if (document.getElementById('yt-hidden-frame')) return;
+    if (!document.body) return; // Prevent crashes if parsed prematurely
+    
     const container = document.createElement('iframe');
     container.id = 'yt-hidden-frame';
     container.src = 'https://www.youtube.com/embed/?enablejsapi=1&autoplay=1&mute=0&playsinline=1&controls=0';
@@ -274,32 +288,47 @@ const initIframeContainer = () => {
     document.body.appendChild(container);
 };
 
-if (document.body) {
-    initIframeContainer();
-} else {
-    document.addEventListener('DOMContentLoaded', initIframeContainer);
-}
+const initIframeAndPlayer = () => {
+    if (window.YT && window.YT.Player) {
+        initIframeContainer();
+        if (!document.getElementById('yt-hidden-frame')) return;
 
-const script = document.createElement('script');
-script.src = 'https://www.youtube.com/iframe_api';
-document.head.appendChild(script);
+        YTP = new YT.Player('yt-hidden-frame', {
+            events: {
+                onReady: e => {
+                    ytReady = true;
+                    e.target.setVolume(100);
+                    if (activeEngine === 'iframe' && window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
+                        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+                        YTP.cueVideoById({ videoId: track.videoId });
+                    }
+                },
+                onStateChange: onYTS
+            }
+        });
+    }
+};
 
 window.onYouTubeIframeAPIReady = () => {
-    initIframeContainer();
-    YTP = new YT.Player('yt-hidden-frame', {
-        events: {
-            onReady: e => {
-                ytReady = true;
-                e.target.setVolume(100);
-                if (activeEngine === 'iframe' && window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
-                    const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-                    YTP.cueVideoById({ videoId: track.videoId });
-                }
-            },
-            onStateChange: onYTS
-        }
-    });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initIframeAndPlayer);
+    } else {
+        initIframeAndPlayer();
+    }
 };
+
+// Inject Youtube dependency safely after parsing
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        const script = document.createElement('script');
+        script.src = 'https://www.youtube.com/iframe_api';
+        document.head.appendChild(script);
+    });
+} else {
+    const script = document.createElement('script');
+    script.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(script);
+}
 
 function onYTS(e) {
     if (activeEngine !== 'iframe') return;
@@ -410,6 +439,7 @@ function formatTime(seconds) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+// Intercepts Media Session configuration
 function updateMediaSession(track) {
     if (!('mediaSession' in navigator)) return;
 
@@ -1076,7 +1106,4 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('mouseup', handleScrubEnd);
         
         fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
-        document.addEventListener('touchmove', handleScrubMove, { passive: false });
-        document.addEventListener('touchend', handleScrubEnd);
-    }
-});
+        document.addEventListener('touc
