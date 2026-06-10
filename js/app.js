@@ -13,11 +13,12 @@
         }
     };
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', clearSplash);
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(clearSplash, 1800); // Fixed: Keeps your splash screen and motto active for ~2 seconds
+        });
     } else {
-        clearSplash();
+        setTimeout(clearSplash, 1800);
     }
-    setTimeout(clearSplash, 200);
 })();
 
 let deferredInstallPrompt;
@@ -866,7 +867,7 @@ window.performSearch = async (query) => {
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         if (currentId !== window.searchSessionId) return null; 
 
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVISIOUS.length];
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000); 
         
