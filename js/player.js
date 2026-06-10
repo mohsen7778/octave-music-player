@@ -1,6 +1,7 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
 // Background Playback Active + Ghost Timeline + Juicy Liquid Colors
+// Chrome Iframe Engine + Keep-Alive Fix Applied
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -33,16 +34,15 @@ window.OCTAVE = {
     nextTrackPreloaded: false 
 };
 
-// Use native browser audio engine for Chrome/Safari to support background playback natively
-window.AUDIO_ENGINE = 'native'; 
-let activeEngine = 'native'; 
+// --- FIX: Universally use the iframe engine. Native Invidious streams are blocked by Chrome.
+// The silent MP3 loop below will force Chrome to keep the iframe playing in the background.
+window.AUDIO_ENGINE = 'iframe'; 
+let activeEngine = 'iframe'; 
 
 if (navigator.brave) {
-    window.AUDIO_ENGINE = 'iframe';
-    activeEngine = 'iframe';
     console.log("Octave Brave detected - Using Instant IFrame Engine");
 } else {
-    console.log("Octave Chrome/Safari detected - Enabled Native Engine to secure background playback");
+    console.log("Octave Chrome/Safari detected - Enabled IFrame Engine + Silent Audio Keep-Alive");
 }
 
 window.initTrackStats = (videoId) => {
