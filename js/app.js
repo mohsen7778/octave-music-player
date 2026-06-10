@@ -1,10 +1,10 @@
 // ============================================================
 // app.js — Octave Full Flagship Engine
-// DOWNLOAD FUNCTION FULLY RESTORED + ROUTING ACTIVE
+// Cache Nuke Removed + Search Race Condition Fixed
 // ============================================================
 
 // ABSOLUTE OVERRIDE: Forcefully kill the splash screen instantly
-制造(function() {
+(function() {
     const clearSplash = () => {
         const splash = document.getElementById('splash-screen');
         if (splash) {
@@ -955,4 +955,130 @@ function handleBravePrompt() {
         localStorage.setItem('bravePromptShown', 'true');
         document.getElementById('brave-modal')?.classList.remove('active');
     };
-    document.getElementById('
+    document.getElementById('close-brave')?.addEventListener('click', dismissBrave);
+    document.getElementById('get-brave')?.addEventListener('click', dismissBrave);
+}
+
+document.getElementById('opt-share-track')?.addEventListener('click', () => {
+    if (window.OCTAVE && window.OCTAVE.activeTrackForOptions) {
+        const track = window.OCTAVE.activeTrackForOptions;
+        const url = new URL(window.location.origin + window.location.pathname);
+        url.searchParams.set('v', track.videoId);
+        url.searchParams.set('t', track.title);
+        url.searchParams.set('a', track.author);
+        url.searchParams.set('th', window.getSafeThumb(track));
+        
+        navigator.clipboard.writeText(url.toString()).then(() => {
+            alert("Track link copied to clipboard!");
+        }).catch(() => {
+            alert("Failed to copy link.");
+        });
+        document.getElementById('track-options-modal').classList.remove('active');
+    }
+});
+
+document.getElementById('opt-like-track')?.addEventListener('click', () => {
+    if (window.OCTAVE && window.OCTAVE.activeTrackForOptions) {
+        window.toggleLike(window.OCTAVE.activeTrackForOptions);
+        document.getElementById('track-options-modal').classList.remove('active');
+    }
+});
+
+document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
+    if (!window.OCTAVE) return;
+    document.getElementById('track-options-modal').classList.remove('active');
+    const plModal = document.getElementById('select-playlist-modal');
+    const list = document.getElementById('playlist-selection-list');
+    if (!list || !plModal) return;
+    if (Object.keys(window.OCTAVE.playlists).length === 0) {
+        list.innerHTML = '<div class="empty-state-text">No playlists.</div>';
+    } else {
+        list.innerHTML = '';
+        Object.keys(window.OCTAVE.playlists).forEach(plName => {
+            const el = document.createElement('div');
+            el.className = 'drawer-item';
+            el.innerHTML = `<i class="fa-solid fa-list"></i> <span>${window.escapeHTML(plName)}</span>`;
+            el.addEventListener('click', () => {
+                window.OCTAVE.playlists[plName].push(window.OCTAVE.activeTrackForOptions);
+                window.saveCache();
+                plModal.classList.remove('active');
+                if (window.renderPlaylistDetail && document.querySelector('h1')?.textContent === plName) window.renderPlaylistDetail(plName);
+            });
+            list.appendChild(el);
+        });
+    }
+    plModal.classList.add('active');
+});
+
+// --- CORE UTILITIES AND HOOKS ---
+document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
+    if (window.OCTAVE && window.OCTAVE.activeTrackForOptions && window.downloadTrack) {
+        window.downloadTrack(window.OCTAVE.activeTrackForOptions, e.currentTarget);
+    }
+});
+
+document.getElementById('start-yt-import')?.addEventListener('click', async () => {
+    const urlInput = document.getElementById('yt-playlist-url');
+    if (!urlInput || !window.OCTAVE) return;
+    const urlValue = urlInput.value.trim();
+    if (!urlValue) return;
+    let playlistId = '';
+    try {
+        const urlObj = new URL(urlValue);
+        playlistId = urlObj.searchParams.get('list');
+    } catch (e) {
+        if (urlValue.startsWith('PL') && urlValue.length > 15) {
+            playlistId = urlValue;
+        }
+    }
+    if (!playlistId) {
+        alert("Invalid URL.");
+        return;
+    }
+    const btn = document.getElementById('start-yt-import');
+    if (!btn) return;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+
+    let success = false;
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        try {
+            const r = await fetch(`${base}/api/v1/playlists/${playlistId}`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            if (r.ok) {
+                const data = await r.json();
+                if (data.videos && data.videos.length > 0) {
+                    let finalName = data.title || "Imported";
+                    let count = 1;
+                    while (window.OCTAVE.playlists[finalName]) {
+                        finalName = `${data.title} (${count})`;
+                        count++;
+                    }
+                    window.OCTAVE.playlists[finalName] = data.videos.map(v => ({
+                        videoId: v.videoId,
+                        title: v.title,
+                        author: v.author,
+                        thumb: (v.videoThumbnails && v.videoThumbnails.length > 0) ? v.videoThumbnails[0].url : ''
+                    }));
+                    window.saveCache();
+                    success = true;
+                    alert(`Imported ${data.videos.length} tracks!`);
+                    document.getElementById('yt-import-modal').classList.remove('active');
+                    urlInput.value = '';
+                    if(window.renderHome) window.renderHome();
+                    break;
+                }
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    if (!success) alert("Failed.");
+    btn.innerHTML = 'Import';
+    btn.disabled = false;
+});
