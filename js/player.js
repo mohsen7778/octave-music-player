@@ -33,7 +33,7 @@ window.OCTAVE = {
     nextTrackPreloaded: false 
 };
 
-// Set Hybrid IFrame Engine as default across all browsers to bypass native stream bans
+// Defaulting to Hybrid IFrame Engine to secure background privileges
 window.AUDIO_ENGINE = 'iframe'; 
 let activeEngine = 'iframe'; 
 
@@ -172,7 +172,7 @@ document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
 function getStreamUrl(videoId) {
     const base = window.INVIDIOUS[window.invIdx];
-    // Appended local=true to force the Invidious instance to proxy the bytes, bypassing the Chrome 403 blocks
+    // local=true forces the Invidious instance to proxy bytes, bypassing raw 403 CDN blocks
     return `${base}/latest_version?id=${videoId}&itag=140&local=true`;
 }
 
@@ -260,20 +260,30 @@ AUDIO.addEventListener('error', () => {
 let YTP = null;
 let ytReady = false;
 
+// Create container off-screen to prevent Chrome's rendering thread from freezing/throttling invisible frames
+const initIframeContainer = () => {
+    if (document.getElementById('yt-hidden-frame')) return;
+    const container = document.createElement('iframe');
+    container.id = 'yt-hidden-frame';
+    container.src = 'https://www.youtube.com/embed/?enablejsapi=1&autoplay=1&mute=0&playsinline=1&controls=0';
+    container.allow = 'autoplay';
+    container.style.cssText = 'position:fixed; width:200px; height:200px; bottom:-1000px; right:-1000px; pointer-events:none; z-index:-9999; border:none;';
+    document.body.appendChild(container);
+};
+
+if (document.body) {
+    initIframeContainer();
+} else {
+    document.addEventListener('DOMContentLoaded', initIframeContainer);
+}
+
 const script = document.createElement('script');
 script.src = 'https://www.youtube.com/iframe_api';
 document.head.appendChild(script);
 
 window.onYouTubeIframeAPIReady = () => {
-    const container = document.createElement('div');
-    container.id = 'yt-hidden-frame';
-    container.style.cssText = 'position:fixed;width:1px;height:1px;bottom:0;right:0;opacity:0;pointer-events:none;';
-    document.body.appendChild(container);
-
+    initIframeContainer();
     YTP = new YT.Player('yt-hidden-frame', {
-        height: '1',
-        width: '1',
-        playerVars: { autoplay: 0, controls: 0, playsinline: 1 },
         events: {
             onReady: e => {
                 ytReady = true;
@@ -514,6 +524,7 @@ window.playTrackByIndex = (index) => {
 
     if (activeEngine === 'iframe') {
         AUDIO.pause();
+        AUDIO.loop = true; // Loop the background silent track continuously to hold tab focus active
         
         const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNyAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
         AUDIO.src = SILENT_MP3;
@@ -522,7 +533,6 @@ window.playTrackByIndex = (index) => {
                 YTP.loadVideoById({ videoId: track.videoId });
                 YTP.playVideo();
             } else {
-                // If the player isn't ready on rapid click, check frequently, fallback to native if timeout
                 const checkYt = setInterval(() => {
                     if (ytReady && YTP) {
                         YTP.loadVideoById({ videoId: track.videoId });
@@ -546,6 +556,7 @@ window.playTrackByIndex = (index) => {
             }
         });
     } else {
+        AUDIO.loop = false; // Disable loops for real audio streams so ended event listeners fire correctly
         if (YTP && typeof YTP.pauseVideo === 'function') YTP.pauseVideo();
         tryNextStream(track.videoId); 
     }
