@@ -94,7 +94,7 @@ function loadCache() {
             window.OCTAVE.queue = parsed.queue || [];
             window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
             window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks: [] };
-            window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks: [] },
+            window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks: [] };
             window.OCTAVE.artistCache = parsed.artistCache || {};
         }
     } catch (e) {
@@ -841,182 +841,6 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     }
 }
 
-window.performSearch = async (query) => {
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        try {
-            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (!r.ok) continue;
-            const d = await r.json();
-            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
-                videoId: item.videoId,
-                title: item.title,
-                author: item.author,
-                thumb: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
-            }));
-        } catch (e) {
-            continue;
-        }
-    }
-    return [];
-};
-
-window.setSleepTimer = (minutes) => {
-    if (sleepTimerId) clearTimeout(sleepTimerId);
-    if (minutes === 0) {
-        alert('Sleep timer cancelled');
-        document.getElementById('timer-modal')?.classList.remove('active');
-        return;
-    }
-    alert(`Sleep timer set Audio will pause in ${minutes} minutes`);
-    document.getElementById('timer-modal')?.classList.remove('active');
-    sleepTimerId = setTimeout(() => {
-        if (window.OCTAVE.isPlaying) window.togglePlay();
-    }, minutes * 60000);
-};
-
-window.fetchLyrics = async (artist, title) => {
-    const cleanTitle = title
-        .replace(/[\(\[【].*?[\)\]】]/g, '')
-        .replace(/(feat\.|ft\.|remix|official|video|music video|lyric|audio|live).*/gi, '')
-        .replace(/["']/g, '')
-        .trim();
-
-    const cleanArtist = artist
-        .replace(/ - Topic/gi, '')
-        .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| x | with /i)[0]
-        .trim();
-
-    try {
-        const query = `${cleanArtist} ${cleanTitle}`;
-        const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
-        if (r1.ok) {
-            const data = await r1.json();
-            if (data && data.length > 0) {
-                const bestMatch = data.find(item =>
-                    item.trackName.toLowerCase().includes(cleanTitle.toLowerCase())
-                ) || data[0];
-
-                const rawLyrics = bestMatch.syncedLyrics || bestMatch.plainLyrics || "";
-                if (rawLyrics) {
-                    const cleanLines = rawLyrics
-                        .replace(/\[\d+:\d+\.\d+\]/g, '')
-                        .split('\n')
-                        .filter(l => l.trim() !== "");
-
-                    let html = `<div style="padding: 20px 0 160px 0; font-family: '${window.OCTAVE.selectedFont}', sans-serif; display: flex; flex-direction: column; gap: 16px;">`;
-                    cleanLines.forEach(line => {
-                        html += `<div class="lyric-line">${window.escapeHTML(line)}</div>`;
-                    });
-                    html += '</div>';
-                    return html;
-                }
-            }
-        }
-    } catch (e) {}
-    return `<div style="text-align:center; padding: 40px; color: var(--text-secondary);">Lyrics not found for this track.</div>`;
-};
-
-window.fetchFullArtistProfile = async (artist) => {
-    const cleanArtist = artist
-        .replace(/ - Topic/gi, '')
-        .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| x | with /i)[0]
-        .trim();
-    
-    if (window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanArtist]) {
-        if (window.OCTAVE.artistCache[cleanArtist].bio !== "Artist biography not available.") {
-            return window.OCTAVE.artistCache[cleanArtist];
-        } else {
-            delete window.OCTAVE.artistCache[cleanArtist];
-        }
-    }
-
-    let profile = {
-        name: cleanArtist,
-        bio: "Artist biography not available.",
-        banner: "",
-        tracks: []
-    };
-
-    try {
-        const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
-        if (r1.ok) {
-            const data = await r1.json();
-            if (data.artists && data.artists[0]) {
-                const art = data.artists[0];
-                if (art.strBiographyEN) profile.bio = art.strBiographyEN.substring(0, 1000) + "...";
-                if (art.strArtistFanart) profile.banner = art.strArtistFanart;
-                else if (art.strArtistThumb) profile.banner = art.strArtistThumb;
-            }
-        }
-    } catch (e) {}
-    
-    if (profile.bio === "Artist biography not available.") {
-        try {
-            const w1 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
-            if (w1.ok) {
-                const d1 = await w1.json();
-                if (d1.extract && !d1.extract.includes("may refer to")) {
-                    profile.bio = d1.extract;
-                }
-            }
-            
-            if (profile.bio === "Artist biography not available.") {
-                const w2 = await fetch(`https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(cleanArtist)}&origin=*`);
-                if (w2.ok) {
-                    const d2 = await w2.json();
-                    const pages = d2.query.pages;
-                    const pageId = Object.keys(pages)[0];
-                    if (pageId !== "-1" && pages[pageId].extract && !pages[pageId].extract.includes("may refer to")) {
-                        profile.bio = pages[pageId].extract;
-                    }
-                }
-            }
-        } catch (e) {}
-    }
-
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        try {
-            const r3 = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(cleanArtist)}&type=video&sort_by=view_count&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (r3.ok) {
-                const d = await r3.json();
-                if (d && d.length > 0) {
-                    profile.tracks = d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).slice(0, 10).map(item => ({
-                        videoId: item.videoId,
-                        title: item.title,
-                        author: item.author,
-                        thumb: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
-                    }));
-                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-                    break;
-                }
-            }
-        } catch (e) {
-            continue;
-        }
-    }
-    
-    if (!window.OCTAVE.artistCache) window.OCTAVE.artistCache = {};
-    window.OCTAVE.artistCache[cleanArtist] = profile;
-    window.saveCache();
-
-    return profile;
-};
-
 function initPlayerDOM() {
     try {
         if (window.OCTAVE.currentIndex === -1 && window.OCTAVE.recentPlayed.length > 0) {
@@ -1149,4 +973,64 @@ if (document.readyState === 'loading') {
         if (!AudioCtor) return;
         try {
             silentAudioCtx = new AudioCtor();
-            const buffer = silentAudio
+            const buffer = silentAudioCtx.createBuffer(1, 1, 22050);
+            const source = silentAudioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.loop = true;
+            source.connect(silentAudioCtx.destination);
+            source.start();
+            silentAudioCtx.resume().catch(e => console.warn('Silent ctx resume failed', e));
+            keepAliveStarted = true;
+        } catch (e) {
+            console.warn('Silent AudioContext failed', e);
+        }
+    }
+    
+    function wrapPlayFunction(originalFn, name) {
+        if (typeof originalFn !== 'function') return originalFn;
+        return function(...args) {
+            if (!keepAliveStarted) {
+                startSilentAudioContext();
+            }
+            return originalFn.apply(this, args);
+        };
+    }
+    
+    if (window.playTrack) window.playTrack = wrapPlayFunction(window.playTrack, 'playTrack');
+    if (window.playTrackByIndex) window.playTrackByIndex = wrapPlayFunction(window.playTrackByIndex, 'playTrackByIndex');
+    
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && window.audio && !window.audio.paused) {
+            setTimeout(() => {
+                if (window.audio && !window.audio.paused) {
+                    window.audio.play().catch(e => console.warn('Auto-resume failed', e));
+                }
+            }, 100);
+        }
+    });
+    
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('pause', () => {
+            if (window.audio && !window.audio.paused) {
+                setTimeout(() => window.audio.play().catch(e => console.warn(e)), 50);
+            }
+        });
+    }
+    
+    if (window.audio) {
+        window.audio.addEventListener('play', () => {
+            if (!keepAliveStarted) startSilentAudioContext();
+        });
+    } else {
+        const observer = new MutationObserver(() => {
+            if (window.audio && !window.audio._bgFixAttached) {
+                window.audio.addEventListener('play', () => {
+                    if (!keepAliveStarted) startSilentAudioContext();
+                });
+                window.audio._bgFixAttached = true;
+                observer.disconnect();
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+})();
