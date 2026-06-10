@@ -190,7 +190,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// --- GLOBAL EVENT DELEGATION ---
 document.body.addEventListener('click', async (e) => {
     if (e.target.closest('#menu-btn')) {
         document.getElementById('side-menu').classList.add('active');
@@ -385,7 +384,6 @@ document.body.addEventListener('click', async (e) => {
     }
 });
 
-// --- AI MIX ENGINE ---
 async function generateAiMix() {
     const promptInput = document.getElementById('ai-prompt').value.trim();
     const lang = document.getElementById('ai-lang').value;
@@ -475,7 +473,6 @@ CRITICAL RULES:
 }
 document.getElementById('generate-ai-mix')?.addEventListener('click', generateAiMix);
 
-// --- RESTORED CORE FUNCTIONS ---
 window.openTrackOptions = (track) => {
     window.OCTAVE.activeTrackForOptions = track;
     const infoDiv = document.getElementById('opt-track-info');
@@ -1145,4 +1142,98 @@ window.downloadTrack = async (track, btnElement) => {
                 a.href = targetUrl;
                 a.download = filename;
                 a.target = "_blank";
-                document.body.appendChild
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+            
+            if (routeMode === 'telegram' && !tgSuccess) {
+                alert("Telegram delivery failed. File downloaded to device storage instead. Check Bot Token and Chat ID.");
+            }
+        }
+        
+        window.markTrackDownloaded(track.videoId);
+        await devLog("6. COMPLETE", "MP3 routing and delivery finished successfully.");
+        document.getElementById('track-options-modal').classList.remove('active');
+        
+    } catch (error) {
+        console.error("Extraction Error:", error);
+        await devLog("FATAL_CRASH", `Name: ${error.name}\nMessage: ${error.message}`);
+        alert("Download failed. Check Telegram dev logs.");
+    } finally {
+        btnElement.innerHTML = originalHTML;
+        btnElement.style.pointerEvents = 'auto';
+    }
+};
+
+document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
+    if (window.OCTAVE && window.OCTAVE.activeTrackForOptions && window.downloadTrack) {
+        window.downloadTrack(window.OCTAVE.activeTrackForOptions, e.currentTarget);
+    }
+});
+
+document.getElementById('start-yt-import')?.addEventListener('click', async () => {
+    const urlInput = document.getElementById('yt-playlist-url');
+    if (!urlInput || !window.OCTAVE) return;
+    const urlValue = urlInput.value.trim();
+    if (!urlValue) return;
+    let playlistId = '';
+    try {
+        const urlObj = new URL(urlValue);
+        playlistId = urlObj.searchParams.get('list');
+    } catch (e) {
+        if (urlValue.startsWith('PL') && urlValue.length > 15) {
+            playlistId = urlValue;
+        }
+    }
+    if (!playlistId) {
+        alert("Invalid URL.");
+        return;
+    }
+    const btn = document.getElementById('start-yt-import');
+    if (!btn) return;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+
+    let success = false;
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        try {
+            const r = await fetch(`${base}/api/v1/playlists/${playlistId}`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            if (r.ok) {
+                const data = await r.json();
+                if (data.videos && data.videos.length > 0) {
+                    let finalName = data.title || "Imported";
+                    let count = 1;
+                    while (window.OCTAVE.playlists[finalName]) {
+                        finalName = `${data.title} (${count})`;
+                        count++;
+                    }
+                    window.OCTAVE.playlists[finalName] = data.videos.map(v => ({
+                        videoId: v.videoId,
+                        title: v.title,
+                        author: v.author,
+                        thumb: (v.videoThumbnails && v.videoThumbnails.length > 0) ? v.videoThumbnails[0].url : ''
+                    }));
+                    window.saveCache();
+                    success = true;
+                    alert(`Imported ${data.videos.length} tracks!`);
+                    document.getElementById('yt-import-modal').classList.remove('active');
+                    urlInput.value = '';
+                    if(window.renderHome) window.renderHome();
+                    break;
+                }
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    if (!success) alert("Failed.");
+    btn.innerHTML = 'Import';
+    btn.disabled = false;
+});
