@@ -1,7 +1,6 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
 // Background Playback Active + Ghost Timeline + Juicy Liquid Colors
-// Chrome Iframe Engine + Background Routine Fixed
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -34,14 +33,14 @@ window.OCTAVE = {
     nextTrackPreloaded: false 
 };
 
-// Use native browser audio engine for Chrome/Safari to support background playback natively
+// Use iframe engine as the baseline to ensure search and playback connectivity
 window.AUDIO_ENGINE = 'iframe'; 
 let activeEngine = 'iframe'; 
 
 if (navigator.brave) {
     console.log("Octave Brave detected - Using Instant IFrame Engine");
 } else {
-    console.log("Octave Chrome/Safari detected - Enabled IFrame Engine + Silent Audio Keep-Alive");
+    console.log("Octave Chrome/Safari detected - Enabled IFrame Engine");
 }
 
 window.initTrackStats = (videoId) => {
@@ -149,7 +148,7 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
                 .filter(inst => inst && inst[1] && inst[1].type === 'https' && inst[1].api === true)
                 .map(inst => inst[1].uri)
                 .filter(Boolean);
-            if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVISIOUS])];
+            if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
         }
     })
     .catch(() => console.warn('Using fallback instances'));
@@ -202,16 +201,10 @@ function preloadNextTrackInQueue() {
 
 const tryNextStream = (videoId) => {
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
-    
-    if (preloadedVideoId === videoId && PRELOAD_AUDIO.src && !PRELOAD_AUDIO.src.includes('googlevideo.com')) {
-        AUDIO.src = PRELOAD_AUDIO.src;
-    } else {
-        AUDIO.src = getStreamUrl(videoId);
-    }
-    
+    AUDIO.src = getStreamUrl(videoId);
     AUDIO.load();
     AUDIO.play().catch((err) => {
-        console.warn("Direct native stream failed, rotating instance...", err);
+        console.warn("Direct stream failed, rotating instance...", err);
         window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
         AUDIO.src = getStreamUrl(videoId);
         AUDIO.load();
@@ -245,28 +238,6 @@ AUDIO.addEventListener('pause', () => {
 AUDIO.addEventListener('ended', () => {
     if (activeEngine !== 'native') return;
     handleTrackEnded();
-});
-
-let nativeRetryCount = 0;
-AUDIO.addEventListener('error', () => {
-    if (activeEngine !== 'native') return;
-    if (nativeRetryCount < 3) {
-        nativeRetryCount++;
-        window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
-        if (window.OCTAVE.currentIndex >= 0) {
-            const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-            const currentPos = AUDIO.currentTime || 0;
-            AUDIO.src = getStreamUrl(track.videoId);
-            AUDIO.currentTime = currentPos;
-            AUDIO.load();
-            AUDIO.play().catch(() => { window.OCTAVE.isTransitioning = false; });
-        }
-    } else {
-        nativeRetryCount = 0;
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
-    }
 });
 
 let YTP = null;
@@ -577,44 +548,20 @@ window.playTrackByIndex = async (index) => {
     activeEngine = window.AUDIO_ENGINE; 
 
     if (activeEngine === 'iframe') {
-        AUDIO.pause();
-        AUDIO.loop = true; 
-        
-        const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNyAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
-        AUDIO.src = SILENT_MP3;
-        AUDIO.load(); 
-        
-        AUDIO.play().then(() => {
-            if (ytReady && YTP) {
-                YTP.loadVideoById({ videoId: track.videoId });
-                YTP.playVideo();
-            } else {
-                const checkYt = setInterval(() => {
-                    if (ytReady && YTP) {
-                        YTP.loadVideoById({ videoId: track.videoId });
-                        YTP.playVideo();
-                        clearInterval(checkYt);
-                    }
-                }, 100);
-                setTimeout(() => {
+        if (ytReady && YTP) {
+            YTP.loadVideoById({ videoId: track.videoId });
+            YTP.playVideo();
+        } else {
+            const checkYt = setInterval(() => {
+                if (ytReady && YTP) {
+                    YTP.loadVideoById({ videoId: track.videoId });
+                    YTP.playVideo();
                     clearInterval(checkYt);
-                    if (!window.OCTAVE.isPlaying) {
-                        console.warn("API load delay: falling back to native proxied streaming.");
-                        activeEngine = 'native';
-                        tryNextStream(track.videoId);
-                    }
-                }, 5000);
-            }
-        }).catch((err) => {
-            console.warn("Background loop promise unhandled, running iframe autoplay fallback", err);
-            if (ytReady && YTP) {
-                YTP.loadVideoById({ videoId: track.videoId });
-                YTP.playVideo();
-            }
-        });
+                }
+            }, 100);
+            setTimeout(() => clearInterval(checkYt), 5000);
+        }
     } else {
-        AUDIO.loop = false; 
-        if (YTP && typeof YTP.pauseVideo === 'function') YTP.pauseVideo();
         tryNextStream(track.videoId); 
     }
 };
