@@ -1,7 +1,7 @@
 // ============================================================
 // player.js Octave Hybrid Audio Engine
 // Background Playback Active + Ghost Timeline + Juicy Liquid Colors
-// Chrome Native Engine Fixed for True Background Play
+// Chrome Iframe Engine + Background Routine Fixed
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -35,15 +35,13 @@ window.OCTAVE = {
 };
 
 // Use native browser audio engine for Chrome/Safari to support background playback natively
-window.AUDIO_ENGINE = 'native'; 
-let activeEngine = 'native'; 
+window.AUDIO_ENGINE = 'iframe'; 
+let activeEngine = 'iframe'; 
 
 if (navigator.brave) {
-    window.AUDIO_ENGINE = 'iframe';
-    activeEngine = 'iframe';
     console.log("Octave Brave detected - Using Instant IFrame Engine");
 } else {
-    console.log("Octave Chrome/Safari detected - Enabled Native Engine for True Background Play");
+    console.log("Octave Chrome/Safari detected - Enabled IFrame Engine + Silent Audio Keep-Alive");
 }
 
 window.initTrackStats = (videoId) => {
@@ -151,7 +149,7 @@ fetch('https://api.invidious.io/instances.json?sort_by=health')
                 .filter(inst => inst && inst[1] && inst[1].type === 'https' && inst[1].api === true)
                 .map(inst => inst[1].uri)
                 .filter(Boolean);
-            if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
+            if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVISIOUS])];
         }
     })
     .catch(() => console.warn('Using fallback instances'));
@@ -202,10 +200,10 @@ function preloadNextTrackInQueue() {
     }
 }
 
-const tryNextStream = (videoId, attempt = 0) => {
+const tryNextStream = (videoId) => {
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
     
-    if (preloadedVideoId === videoId && PRELOAD_AUDIO.src && !PRELOAD_AUDIO.src.includes('googlevideo.com') && attempt === 0) {
+    if (preloadedVideoId === videoId && PRELOAD_AUDIO.src && !PRELOAD_AUDIO.src.includes('googlevideo.com')) {
         AUDIO.src = PRELOAD_AUDIO.src;
     } else {
         AUDIO.src = getStreamUrl(videoId);
@@ -214,14 +212,14 @@ const tryNextStream = (videoId, attempt = 0) => {
     AUDIO.load();
     AUDIO.play().catch((err) => {
         console.warn("Direct native stream failed, rotating instance...", err);
-        if (attempt < 5) {
-            window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
-            tryNextStream(videoId, attempt + 1);
-        } else {
+        window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
+        AUDIO.src = getStreamUrl(videoId);
+        AUDIO.load();
+        AUDIO.play().catch(() => {
             updatePlayIcons('fa-solid fa-play');
             window.OCTAVE.isPlaying = false;
             window.OCTAVE.isTransitioning = false;
-        }
+        });
     });
 };
 
@@ -493,7 +491,7 @@ function syncMediaSessionPosition() {
     }
 }
 
-window.playTrackByIndex = (index) => {
+window.playTrackByIndex = async (index) => {
     if (window.OCTAVE.isTransitioning) return; 
     
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
@@ -522,6 +520,33 @@ window.playTrackByIndex = (index) => {
     if (currTime) currTime.textContent = "0:00";
     if (totTime) totTime.textContent = "0:00";
     
+    updatePlayerUI(track);
+
+    if (!track.videoId) {
+        try {
+            const query = `${track.author} ${track.title} audio`;
+            const results = await window.performSearch(query);
+            if (results && results.length > 0) {
+                track.videoId = results[0].videoId;
+                if (!track.thumb || track.thumb.includes('mzstatic') || track.thumb.includes('apple.com')) {
+                    track.thumb = results[0].thumb; 
+                    updatePlayerUI(track);
+                }
+                window.saveCache();
+            } else {
+                alert("Could not find an audio stream for this track.");
+                updatePlayIcons('fa-solid fa-play');
+                window.OCTAVE.isTransitioning = false;
+                return;
+            }
+        } catch (e) {
+            alert("Network error resolving track.");
+            updatePlayIcons('fa-solid fa-play');
+            window.OCTAVE.isTransitioning = false;
+            return;
+        }
+    }
+
     const hour = new Date().getHours();
     let tod = 'night';
     if (hour >= 5 && hour < 12) tod = 'morning';
