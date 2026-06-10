@@ -159,7 +159,7 @@ window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
-window.audio = AUDIO; 
+window.audio = AUDIO; // Bound globally to allow visibility and keep-alive handlers to track stream state
 
 const PRELOAD_AUDIO = new Audio(); 
 PRELOAD_AUDIO.preload = 'auto';
@@ -181,15 +181,13 @@ function unlockAudioEngine() {
         src.start(0);
         ctx.resume().catch(() => {});
     } catch (e) {}
-
-    // SAFE TRIGGER: Only launch the background fix safely on first interaction
-    if (window.startChromeKeepAlive) window.startChromeKeepAlive();
 }
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
 function getStreamUrl(videoId) {
     const base = window.INVIDIOUS[window.invIdx];
+    // local=true proxies the streaming bytes from Invidious, preventing 403 blocks on Chrome
     return `${base}/latest_version?id=${videoId}&itag=140&local=true`;
 }
 
@@ -1105,64 +1103,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
             fpProgContainer.addEventListener('mousedown', handleScrubStart);
             document.addEventListener('mousemove', handleScrubMove, { passive: false });
-            document.addEventListener('mouseup', handleScrubEnd);
-            
-            fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
-            document.addEventListener('touchmove', handleScrubMove, { passive: false });
-            document.addEventListener('touchend', handleScrubEnd);
-        }
-    } catch (domErr) {
-        console.warn("Recovered from DOMContentLoaded error inside player.js", domErr);
-    }
-});
-
-// ============================================================
-// CHROME BACKGROUND PLAYBACK FIXES (SAFE MODE)
-// ============================================================
-(function() {
-    let isBrave = false;
-    if (navigator.brave && navigator.brave.isBrave) isBrave = true;
-    if (!isBrave && navigator.userAgent.includes('Brave')) isBrave = true;
-    
-    if (isBrave) return; // Completely skip execution on Brave to avoid conflicts
-    
-    let silentAudioCtx = null;
-    let keepAliveStarted = false;
-    
-    window.startChromeKeepAlive = function() {
-        if (keepAliveStarted) return;
-        const AudioCtor = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtor) return;
-        try {
-            silentAudioCtx = new AudioCtor();
-            const buffer = silentAudioCtx.createBuffer(1, 1, 22050);
-            const source = silentAudioCtx.createBufferSource();
-            source.buffer = buffer;
-            source.loop = true;
-            source.connect(silentAudioCtx.destination);
-            source.start();
-            silentAudioCtx.resume().catch(e => console.warn('Silent ctx resume failed', e));
-            keepAliveStarted = true;
-        } catch (e) {
-            console.warn('Silent AudioContext failed', e);
-        }
-    };
-    
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden && window.audio && !window.audio.paused) {
-            setTimeout(() => {
-                if (window.audio && !window.audio.paused) {
-                    window.audio.play().catch(e => console.warn('Auto-resume failed', e));
-                }
-            }, 100);
-        }
-    });
-    
-    if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('pause', () => {
-            if (window.audio && !window.audio.paused) {
-                setTimeout(() => { if(window.audio) window.audio.play().catch(e => console.warn); }, 50);
-            }
-        });
-    }
-})();
