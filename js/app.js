@@ -1,8 +1,24 @@
 // ============================================================
 // app.js — Octave Full Flagship Engine (RAPIDAPI DIRECT DOWNLOAD)
+// Rate-Limit Proof Search Engine + Auto-Corrector Active
 // ============================================================
 
 let deferredInstallPrompt;
+
+window.getSafeThumb = (track) => {
+    if (!track) return '';
+    if (track.videoId) return `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
+    return track.thumb || '';
+};
+
+if (!window.escapeHTML) {
+    window.escapeHTML = (str) => {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    };
+}
 
 window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
@@ -56,7 +72,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // PWA LAG FIX: Changed 2000ms delay to 100ms instant clear
     setTimeout(() => {
         const splash = document.getElementById('splash-screen');
         if (splash) {
@@ -117,22 +132,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (tab === 'home') {
                 dynamicView.innerHTML = views.home;
-                window.renderHome();
+                if(window.renderHome) window.renderHome();
             } else {
                 dynamicView.innerHTML = views[tab];
                 if (tab === 'search') {
-                    bindSearch();
-                    renderRecentSearches(); 
+                    if(window.bindSearch) window.bindSearch();
+                    if(window.renderRecentSearches) window.renderRecentSearches(); 
                 }
-                if (tab === 'library') renderLibrary();
+                if (tab === 'library') {
+                    if(window.renderLibrary) window.renderLibrary();
+                }
             }
         });
     });
 
     handleBravePrompt();
-    window.renderHome();
+    if(window.renderHome) window.renderHome();
 
-    // Bound only once at startup
     document.getElementById('close-playlist')?.addEventListener('click', () => document.getElementById('playlist-modal').classList.remove('active'));
     document.getElementById('save-playlist')?.addEventListener('click', () => {
         const name = document.getElementById('playlist-name').value.trim();
@@ -141,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
             window.saveCache();
             document.getElementById('playlist-name').value = '';
             document.getElementById('playlist-modal').classList.remove('active');
-            window.renderHome();
+            if(window.renderHome) window.renderHome();
         }
     });
 
@@ -181,6 +197,7 @@ document.body.addEventListener('click', async (e) => {
     if (e.target.closest('#open-ai-mix') || e.target.closest('#open-ai-mix-large')) {
         document.getElementById('ai-mix-modal').classList.add('active');
     }
+    
     if (e.target.closest('#open-discover-mix')) {
         if (window.generateDiscoverMix) window.generateDiscoverMix();
     }
@@ -193,7 +210,6 @@ document.body.addEventListener('click', async (e) => {
         document.getElementById('side-menu').classList.remove('active');
         document.getElementById('menu-backdrop').classList.remove('active');
 
-        // Mask Token for visual display if it exists
         const savedToken = localStorage.getItem('octave_tg_token');
         if (savedToken) {
             const parts = savedToken.split(':');
@@ -208,7 +224,6 @@ document.body.addEventListener('click', async (e) => {
 
         document.getElementById('tg-chat-id').value = localStorage.getItem('octave_tg_chat_id') || '';
 
-        // Select the right route card based on saved settings
         const currentRoute = localStorage.getItem('octave_routing_mode') || 'local';
         document.querySelectorAll('.route-card').forEach(c => {
             c.classList.remove('active');
@@ -240,7 +255,6 @@ document.body.addEventListener('click', async (e) => {
         const btn = e.target.closest('#fetch-chat-id');
         let tokenInput = document.getElementById('tg-bot-token').value.trim();
         
-        // Use real token if input is still masked
         if (tokenInput.includes('********')) tokenInput = localStorage.getItem('octave_tg_token');
 
         if (!tokenInput) {
@@ -331,7 +345,6 @@ document.body.addEventListener('click', async (e) => {
             });
         }
     }
-    // --- END FULL SCREEN ROUTING UI HANDLING ---
 
     const pageBtn = e.target.closest('[data-page]');
     if (pageBtn) {
@@ -358,7 +371,6 @@ document.body.addEventListener('click', async (e) => {
         }
     }
 });
-
 
 // --- AI MIX ENGINE ---
 async function generateAiMix() {
@@ -417,7 +429,7 @@ CRITICAL RULES:
             const artist = parts[1].trim();
             if(!title || !artist) continue;
 
-            const results = await window.performSearch(`${title} ${artist} song audio`);
+            const results = await window.performSearch(`${title} ${artist} audio`);
             if (results && results.length > 0) playableTracks.push(results[0]);
         }
 
@@ -433,7 +445,9 @@ CRITICAL RULES:
         document.getElementById('ai-prompt').value = '';
         
         const activeNav = document.querySelector('.nav-item.active')?.getAttribute('data-tab');
-        if(activeNav === 'home') window.renderHome();
+        if(activeNav === 'home') {
+            if(window.renderHome) window.renderHome();
+        }
         
         alert(`Successfully generated "${finalName}" with ${playableTracks.length} tracks!`);
 
@@ -452,7 +466,7 @@ window.openTrackOptions = (track) => {
     const infoDiv = document.getElementById('opt-track-info');
     if (infoDiv) {
         infoDiv.innerHTML = `
-            <img src="${track.thumb}" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover;">
+            <img src="${window.getSafeThumb(track)}" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover;">
             <div style="flex: 1; min-width: 0;">
                 <div style="font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${window.escapeHTML(track.title)}</div>
                 <div style="font-size: 12px; color: var(--text-secondary);">${window.escapeHTML(track.author)}</div>
@@ -516,7 +530,7 @@ document.getElementById('fp-share-btn')?.addEventListener('click', () => {
         url.searchParams.set('v', track.videoId);
         url.searchParams.set('t', track.title);
         url.searchParams.set('a', track.author);
-        url.searchParams.set('th', track.thumb);
+        url.searchParams.set('th', window.getSafeThumb(track));
         
         navigator.clipboard.writeText(url.toString()).then(() => {
             alert("Track link copied to clipboard!");
@@ -549,7 +563,7 @@ window.renderArtistPage = async (artistName) => {
         profile.tracks.forEach((track, index) => {
             tracksHTML += `
                 <div class="artist-track-item" style="display: flex; align-items: center; gap: 14px; padding: 12px; background: var(--bg-surface); border-radius: 8px; margin-bottom: 12px; cursor: pointer;">
-                    <img src="${track.thumb}" style="width: 50px; height: 50px; border-radius: 6px; object-fit: cover;">
+                    <img src="${window.getSafeThumb(track)}" style="width: 50px; height: 50px; border-radius: 6px; object-fit: cover;">
                     <div style="flex: 1; min-width: 0;">
                         <div style="font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;">${window.escapeHTML(track.title)}</div>
                         <div style="font-size: 12px; color: var(--text-secondary);">${window.escapeHTML(track.author)}</div>
@@ -606,7 +620,7 @@ document.getElementById('fp-queue-btn')?.addEventListener('click', () => {
         const el = document.createElement('div');
         el.style.cssText = `display: flex; align-items: center; gap: 14px; padding: 12px; background: ${isPlaying ? 'rgba(30,215,96,0.1)' : 'var(--bg-surface)'}; border-radius: 8px; margin-bottom: 12px; border: ${isPlaying ? '1px solid var(--accent)' : '1px solid transparent'};`;
         el.innerHTML = `
-            <img src="${track.thumb}" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover;">
+            <img src="${window.getSafeThumb(track)}" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover;">
             <div style="flex: 1; min-width: 0;">
                 <div style="font-size: 14px; font-weight: 600; color: ${isPlaying ? 'var(--accent)' : 'var(--text-primary)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${window.escapeHTML(track.title)}</div>
                 <div style="font-size: 12px; color: var(--text-secondary);">${window.escapeHTML(track.author)}</div>
@@ -654,7 +668,7 @@ window.renderPlaylistDetail = (plName) => {
         tracks.forEach((track, idx) => {
             html += `
                 <div class="list-item" style="position: relative;">
-                    <img src="${track.thumb}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.OCTAVE.queue =[...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
+                    <img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.OCTAVE.queue =[...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
                     <div class="list-info" style="cursor: pointer;" onclick="window.OCTAVE.queue =[...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
                         <div class="list-title">${window.escapeHTML(track.title)}</div>
                         <div class="list-subtitle">${window.escapeHTML(track.author)}</div>
@@ -688,7 +702,7 @@ window.renderLikedSongs = () => {
         tracks.forEach((track, idx) => {
             html += `
                 <div class="list-item" style="position: relative;">
-                    <img src="${track.thumb}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.playTrack(track)">
+                    <img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.playTrack(track)">
                     <div class="list-info" style="cursor: pointer;" onclick="window.playTrack(track)">
                         <div class="list-title">${window.escapeHTML(track.title)}</div>
                         <div class="list-subtitle">${window.escapeHTML(track.author)}</div>
@@ -716,7 +730,7 @@ window.renderHome = () => {
         window.OCTAVE.recentPlayed.forEach(track => {
             const el = document.createElement('div');
             el.className = 'square-card';
-            el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${track.thumb}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
+            el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${window.getSafeThumb(track)}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
             el.addEventListener('click', () => window.playTrack(track));
             recentGrid.appendChild(el);
         });
@@ -729,7 +743,7 @@ window.renderHome = () => {
         recsGrid.innerHTML = '';
         window.OCTAVE.dailyRecs.tracks.forEach(track => {
             const el = document.createElement('div'); el.className = 'square-card';
-            el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${track.thumb}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
+            el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${window.getSafeThumb(track)}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
             el.addEventListener('click', () => window.playTrack(track));
             recsGrid.appendChild(el);
         });
@@ -798,7 +812,7 @@ function renderLibrary() {
     });
 }
 
-function renderRecentSearches() {
+window.renderRecentSearches = () => {
     const recentList = document.getElementById('search-recent-list');
     if (!recentList) return;
 
@@ -808,7 +822,7 @@ function renderRecentSearches() {
             const el = document.createElement('div'); 
             el.className = 'list-item';
             el.innerHTML = `
-                <img src="${track.thumb}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;">
+                <img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;">
                 <div class="list-info" style="cursor: pointer;">
                     <div class="list-title">${window.escapeHTML(track.title)}</div>
                     <div class="list-subtitle">${window.escapeHTML(track.author)}</div>
@@ -822,40 +836,74 @@ function renderRecentSearches() {
     }
 }
 
-// IMAGE BYPASS: Force YouTube Image CDN for standard search
+
+// --- BULLETPROOF SEARCH ENGINE & RACE CONDITION FIX ---
+window.searchGlobalId = 0;
+window.activeSearchTimer = null;
+
 window.performSearch = async (query) => {
+    const currentId = ++window.searchGlobalId;
+    
+    // Auto-inject audio modifier to filter out gaming/vlog junk
+    let searchQuery = query;
+    const qLower = query.toLowerCase();
+    if (!qLower.includes('song') && !qLower.includes('audio') && !qLower.includes('music') && !qLower.includes('remix')) {
+        searchQuery += ' audio'; 
+    }
+
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        // Exit instantly if user typed a new letter during the loop
+        if (currentId !== window.searchGlobalId) return null; 
+
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        
         try {
-            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
+            // Re-routed to fetch optimized regional content & bypassed field stripping
+            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(searchQuery)}&type=video&region=IN`, {
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
+            
             if (!r.ok) continue;
+            
             const d = await r.json();
+            
+            // Final check before parsing array
+            if (currentId !== window.searchGlobalId) return null;
+
             window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
+            return d.filter(item => item.lengthSeconds && item.lengthSeconds >= 30 && item.lengthSeconds <= 600).map(item => ({
                 videoId: item.videoId,
                 title: item.title,
                 author: item.author,
                 thumb: item.videoId ? `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` : ''
             }));
         } catch (e) {
+            clearTimeout(timeoutId);
             continue;
         }
     }
-    return[];
+    return [];
 };
 
-function bindSearch() {
+window.bindSearch = () => {
     const input = document.getElementById('searchInput');
     const resContainer = document.getElementById('searchResults');
-    let timer;
-    input.addEventListener('input', (e) => {
-        clearTimeout(timer);
+    if (!input || !resContainer) return;
+
+    // Destroy duplicate listeners safely
+    const newElement = input.cloneNode(true);
+    input.parentNode.replaceChild(newElement, input);
+
+    newElement.addEventListener('input', (e) => {
+        clearTimeout(window.activeSearchTimer);
         const query = e.target.value.trim();
+        
+        // This locks out older fetch loops instantly
+        window.searchGlobalId++; 
+        const mySearchId = window.searchGlobalId;
         
         if (!query) { 
             resContainer.innerHTML = `
@@ -864,29 +912,36 @@ function bindSearch() {
                     <div class="vertical-list" id="search-recent-list" style="padding-right: 0;"></div>
                 </div>
             `;
-            renderRecentSearches(); 
+            if(window.renderRecentSearches) window.renderRecentSearches(); 
             return; 
         }
         
-        timer = setTimeout(async () => {
+        // Delay increased to 800ms so it doesn't spam APIs while you are still thinking/typing
+        window.activeSearchTimer = setTimeout(async () => {
             resContainer.innerHTML = '<div style="text-align:center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin fa-2x" style="color:var(--accent);"></i></div>';
+            
             const results = await window.performSearch(query);
+            
+            // If the user typed another letter while this was loading, ABORT modifying the screen!
+            if (mySearchId !== window.searchGlobalId) return; 
+            if (results === null) return; 
+            
             resContainer.innerHTML = '';
             
             if (results.length === 0) {
-                resContainer.innerHTML = '<div class="empty-state-text">No results found.</div>';
+                resContainer.innerHTML = '<div class="empty-state-text">No results found for "' + window.escapeHTML(query) + '".</div>';
                 return;
             }
             
             results.slice(0, 15).forEach(track => {
                 const el = document.createElement('div'); el.className = 'list-item';
-                el.innerHTML = `<img src="${track.thumb}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
+                el.innerHTML = `<img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
                 el.addEventListener('click', () => window.playTrack(track));
                 resContainer.appendChild(el);
             });
-        }, 500);
+        }, 800);
     });
-}
+};
 
 function handleBravePrompt() {
     if (!localStorage.getItem('bravePromptShown')) setTimeout(() => document.getElementById('brave-modal')?.classList.add('active'), 1500);
@@ -905,7 +960,7 @@ document.getElementById('opt-share-track')?.addEventListener('click', () => {
         url.searchParams.set('v', track.videoId);
         url.searchParams.set('t', track.title);
         url.searchParams.set('a', track.author);
-        url.searchParams.set('th', track.thumb);
+        url.searchParams.set('th', window.getSafeThumb(track));
         
         navigator.clipboard.writeText(url.toString()).then(() => {
             alert("Track link copied to clipboard!");
@@ -947,7 +1002,7 @@ document.getElementById('opt-add-playlist')?.addEventListener('click', () => {
     plModal.classList.add('active');
 });
 
-// --- APIFY MP3 POLLING ENGINE + TG ROUTING + DEV LOGGING ---
+// --- APIFY MP3 POLLING ENGINE + DEV LOGGING ---
 
 window.getDownloadedTracks = () => {
     try {
@@ -1020,79 +1075,47 @@ window.downloadTrack = async (track, btnElement) => {
         const targetUrl = data.url;
         if (!targetUrl) throw new Error("Worker JSON missing 'url' property.");
 
-        const routeMode = localStorage.getItem('octave_routing_mode') || 'local';
-        const userTgToken = localStorage.getItem('octave_tg_token');
-        const userChatId = localStorage.getItem('octave_tg_chat_id');
-        const filename = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
-
-        let tgSuccess = false;
-
-        if ((routeMode === 'telegram' || routeMode === 'both') && userTgToken && userChatId) {
-            btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Sending TG...</span>';
-            await devLog("4. TG_DELIVERY", "Instructing Telegram to fetch URL directly (CORS Bypass)...");
-            
-            try {
-                const tgRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendAudio?chat_id=${userChatId}&audio=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(track.title)}&performer=${encodeURIComponent(track.author)}`);
-                
-                if (tgRes.ok) {
-                    tgSuccess = true;
-                    await devLog("TG_DELIVERY_SUCCESS", "MP3 Sent to Bot via URL!");
-                } else {
-                    const tgErr = await tgRes.text();
-                    await devLog("TG_DELIVERY_FAIL_AUDIO", tgErr);
-                    
-                    await devLog("TG_DELIVERY_RETRY", "Trying sendDocument fallback with URL...");
-                    const tgDocRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendDocument?chat_id=${userChatId}&document=${encodeURIComponent(targetUrl)}`);
-                    
-                    if (tgDocRes.ok) {
-                        tgSuccess = true;
-                        await devLog("TG_DELIVERY_SUCCESS_DOC", "MP3 Sent to Bot as raw Document URL!");
-                    } else {
-                        const tgDocErr = await tgDocRes.text();
-                        await devLog("TG_DELIVERY_FAIL_DOC", tgDocErr);
-                        throw new Error("Telegram rejected URL via both endpoints.");
-                    }
-                }
-            } catch (e) {
-                await devLog("TG_DELIVERY_ERROR", e.message);
-                console.error("Telegram Upload Error:", e);
-            }
-        }
-
-        if (routeMode === 'local' || routeMode === 'both' || (routeMode === 'telegram' && !tgSuccess)) {
-            btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving Local...</span>';
-            await devLog("5. LOCAL_DOWNLOAD", "Attempting local device download...");
-
-            try {
-                const fileResponse = await fetch(targetUrl);
-                if (!fileResponse.ok) throw new Error(`RapidAPI CDN HTTP ${fileResponse.status}`);
-                const fileBlob = await fileResponse.blob();
-                const localBlobUrl = window.URL.createObjectURL(fileBlob);
-                const a = document.createElement('a');
-                a.href = localBlobUrl;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(localBlobUrl);
-            } catch (networkError) {
-                await devLog("5.5 LOCAL_CORS_FALLBACK", `CORS block detected. Triggering native fallback.`);
-                const a = document.createElement('a');
-                a.href = targetUrl;
-                a.download = filename;
-                a.target = "_blank";
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-            }
-            
-            if (routeMode === 'telegram' && !tgSuccess) {
-                alert("Telegram delivery failed. File downloaded to device storage instead. Check Bot Token and Chat ID.");
-            }
-        }
+        btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving MP3...</span>';
         
+        await devLog("4. BLOB_FETCH_START", `Fetching MP3 from CoolGuruji API link...`);
+
+        let fileResponse;
+        try {
+            fileResponse = await fetch(targetUrl);
+        } catch (networkError) {
+            await devLog("5. BLOB_FETCH_NETWORK_ERROR", `CORS block detected. Triggering native fallback.`);
+            
+            const a = document.createElement('a');
+            a.href = targetUrl;
+            a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+            a.target = "_blank";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            window.markTrackDownloaded(track.videoId);
+            document.getElementById('track-options-modal').classList.remove('active');
+            return;
+        }
+
+        if (!fileResponse.ok) throw new Error(`RapidAPI CDN HTTP ${fileResponse.status}`);
+        
+        const fileBlob = await fileResponse.blob();
+        await devLog("6. BLOB_GENERATED", `Size: ${(fileBlob.size / 1024 / 1024).toFixed(2)} MB`);
+
+        const localBlobUrl = window.URL.createObjectURL(fileBlob);
+        
+        const a = document.createElement('a');
+        a.href = localBlobUrl;
+        a.download = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        window.URL.revokeObjectURL(localBlobUrl);
         window.markTrackDownloaded(track.videoId);
-        await devLog("6. COMPLETE", "MP3 routing and delivery finished successfully.");
+        
+        await devLog("7. COMPLETE", "MP3 saved successfully.");
         document.getElementById('track-options-modal').classList.remove('active');
         
     } catch (error) {
@@ -1104,75 +1127,6 @@ window.downloadTrack = async (track, btnElement) => {
         btnElement.style.pointerEvents = 'auto';
     }
 };
-
-document.getElementById('opt-download-track')?.addEventListener('click', (e) => {
-    if (window.OCTAVE.activeTrackForOptions) {
-        window.downloadTrack(window.OCTAVE.activeTrackForOptions, e.currentTarget);
-    }
-});
-
-document.getElementById('start-yt-import')?.addEventListener('click', async () => {
-    const urlInput = document.getElementById('yt-playlist-url').value.trim();
-    if (!urlInput) return;
-    let playlistId = '';
-    try {
-        const urlObj = new URL(urlInput);
-        playlistId = urlObj.searchParams.get('list');
-    } catch (e) {
-        if (urlInput.startsWith('PL') && urlInput.length > 15) {
-            playlistId = urlInput;
-        }
-    }
-    if (!playlistId) {
-        alert("Invalid URL.");
-        return;
-    }
-    const btn = document.getElementById('start-yt-import');
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-    btn.disabled = true;
-
-    let success = false;
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-        try {
-            const r = await fetch(`${base}/api/v1/playlists/${playlistId}`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (r.ok) {
-                const data = await r.json();
-                if (data.videos && data.videos.length > 0) {
-                    let finalName = data.title || "Imported";
-                    let count = 1;
-                    while (window.OCTAVE.playlists[finalName]) {
-                        finalName = `${data.title} (${count})`;
-                        count++;
-                    }
-                    window.OCTAVE.playlists[finalName] = data.videos.map(v => ({
-                        videoId: v.videoId,
-                        title: v.title,
-                        author: v.author,
-                        thumb: (v.videoThumbnails && v.videoThumbnails.length > 0) ? v.videoThumbnails[0].url : ''
-                    }));
-                    window.saveCache();
-                    success = true;
-                    alert(`Imported ${data.videos.length} tracks!`);
-                    document.getElementById('yt-import-modal').classList.remove('active');
-                    document.getElementById('yt-playlist-url').value = '';
-                    window.renderHome();
-                    break;
-                }
-            }
-        } catch (e) {
-            continue;
-        }
-    }
-    if (!success) alert("Failed.");
-    btn.innerHTML = 'Import';
-    btn.disabled = false;
-});
 
 // ============================================================
 // CHROME BACKGROUND PLAYBACK FIXES
