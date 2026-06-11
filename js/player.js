@@ -123,25 +123,14 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// FIXED: Replaced dead servers with highly reliable, unblocked nodes
+// FIXED: Hardcoded stable list. Removed the dynamic fetch that injects dead servers and causes huge search delays.
 window.INVIDIOUS =[
-    'https://inv.tux.pizza',
-    'https://invidious.projectsegfau.lt',
     'https://invidious.asir.dev',
-    'https://invidious.flokinet.to',
     'https://inv.nadeko.net',
-    'https://invidious.privacyredirect.com'
+    'https://invidious.privacyredirect.com',
+    'https://invidious.flokinet.to',
+    'https://inv.tux.pizza'
 ];
-
-fetch('https://api.invidious.io/instances.json?sort_by=health')
-    .then(res => res.json())
-    .then(data => {
-        const healthy = data
-            .filter(inst => inst[1].type === 'https' && inst[1].api === true)
-            .map(inst => inst[1].uri);
-        if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
-    })
-    .catch(() => console.warn('Using fallback instances'));
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
@@ -609,12 +598,11 @@ window.applyLiquidShadow = (imageSrc) => {
             const h = img.height;
             const sampleSize = 5;
             
-            // Sample from 4 distinct spread points
             const points = [
-                { x: Math.floor(w / 2), y: Math.floor(h / 2) },           // Center
-                { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },        // Top Middle
-                { x: Math.floor(w * 0.85), y: Math.floor(h * 0.85) },     // Bottom Right
-                { x: Math.floor(w * 0.15), y: Math.floor(h * 0.85) }      // Bottom Left
+                { x: Math.floor(w / 2), y: Math.floor(h / 2) },           
+                { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },        
+                { x: Math.floor(w * 0.85), y: Math.floor(h * 0.85) },     
+                { x: Math.floor(w * 0.15), y: Math.floor(h * 0.85) }      
             ];
 
             let r = 0, g = 0, b = 0, count = 0;
@@ -642,22 +630,17 @@ window.applyLiquidShadow = (imageSrc) => {
                 r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
             }
 
-            // --- JUICY BLEND ALGORITHM (Unfade by ~30%) ---
-            
-            // 1. Boost Saturation: Pushes colors away from gray so mixed colors don't look muddy
             let gray = (r + g + b) / 3;
             r = r + (r - gray) * 0.4; 
             g = g + (g - gray) * 0.4;
             b = b + (b - gray) * 0.4;
             
-            // 2. Boost Brightness: Multiplies intensity to make it pop, capping at 255
             r = Math.min(255, Math.max(0, Math.floor(r * 1.2)));
             g = Math.min(255, Math.max(0, Math.floor(g * 1.2)));
             b = Math.min(255, Math.max(0, Math.floor(b * 1.2)));
 
             const fpPlayer = document.getElementById('full-player');
             if (fpPlayer) {
-                // Increased opacity layers (e.g. 0.9, 0.8, 0.7) to unfade the gradient itself
                 fpPlayer.style.background = `
                     radial-gradient(circle at 10% 20%, rgba(${r}, ${g}, ${b}, 0.9) 0%, transparent 40%),
                     radial-gradient(circle at 90% 80%, rgba(${r}, ${g}, ${b}, 0.8) 0%, transparent 40%),
@@ -675,7 +658,6 @@ window.applyLiquidShadow = (imageSrc) => {
 
             const mini = document.querySelector('.mini-player');
             if (mini) {
-                // Unfaded mini player opacity from 0.3 to 0.45
                 mini.style.background = `radial-gradient(circle at 0% 50%, rgba(${r}, ${g}, ${b}, 0.45) 0%, transparent 70%), var(--glass-bg)`;
                 mini.style.boxShadow = `0 10px 30px rgba(0,0,0,0.5), 0 0 15px rgba(${r}, ${g}, ${b}, 0.45)`;
             }
@@ -718,7 +700,9 @@ function updatePlayerUI(track) {
 
     if (document.getElementById('playlist-detail-list')) {
         const activeNav = document.querySelector('.nav-item.active')?.getAttribute('data-tab');
-        if (activeNav === 'home' || activeNav === 'library') window.renderHome();
+        if (activeNav === 'home' || activeNav === 'library') {
+            if (window.renderHome) window.renderHome();
+        }
     }
 }
 
