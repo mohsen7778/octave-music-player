@@ -123,7 +123,6 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// FIXED: Hardcoded stable list. Removed the dynamic fetch that injects dead servers and causes huge search delays.
 window.INVIDIOUS =[
     'https://invidious.asir.dev',
     'https://inv.nadeko.net',
@@ -759,30 +758,25 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     }
 }
 
+// FIXED: Migrated search function to Piped API bypassing blocked Invidious proxies
 window.performSearch = async (query) => {
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        try {
-            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (!r.ok) continue;
-            const d = await r.json();
-            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
-                videoId: item.videoId,
-                title: item.title,
-                author: item.author,
-                thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
-            }));
-        } catch (e) {
-            continue;
+    try {
+        const r = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=music_songs`);
+        if (r.ok) {
+            const data = await r.json();
+            if (data && data.items && data.items.length > 0) {
+                return data.items.slice(0, 15).map(item => ({
+                    videoId: item.url.replace('/watch?v=', ''),
+                    title: item.title,
+                    author: item.uploaderName,
+                    thumb: item.thumbnail
+                }));
+            }
         }
+    } catch (e) {
+        console.warn("Piped search failed", e);
     }
-    return[];
+    return [];
 };
 
 window.setSleepTimer = (minutes) => {
@@ -901,31 +895,21 @@ window.fetchFullArtistProfile = async (artist) => {
         } catch (e) {}
     }
 
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        try {
-            const r3 = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(cleanArtist)}&type=video&sort_by=view_count&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (r3.ok) {
-                const d = await r3.json();
-                if (d && d.length > 0) {
-                    profile.tracks = d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).slice(0, 10).map(item => ({
-                        videoId: item.videoId,
-                        title: item.title,
-                        author: item.author,
-                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
-                    }));
-                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-                    break;
-                }
+    try {
+        const r3 = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(cleanArtist)}&filter=music_songs`);
+        if (r3.ok) {
+            const data = await r3.json();
+            if (data && data.items && data.items.length > 0) {
+                profile.tracks = data.items.slice(0, 10).map(item => ({
+                    videoId: item.url.replace('/watch?v=', ''),
+                    title: item.title,
+                    author: item.uploaderName,
+                    thumb: item.thumbnail
+                }));
             }
-        } catch (e) {
-            continue;
         }
+    } catch (e) {
+        console.warn("Piped artist search failed", e);
     }
     
     if (!window.OCTAVE.artistCache) window.OCTAVE.artistCache = {};
