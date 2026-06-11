@@ -1,6 +1,6 @@
 // ============================================================
 // app.js — Octave Full Flagship Engine
-// 100% Complete File - Search Typo Fixed
+// 100% Complete File - Search Multi-Node Bypass + Telegram Logger
 // ============================================================
 
 (function() {
@@ -384,6 +384,131 @@ document.body.addEventListener('click', async (e) => {
         }
     }
 });
+
+// --- SEARCH ENGINE & BOT LOGGER ---
+window.searchSessionId = 0;
+window.activeSearchTimer = null;
+
+const TG_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
+const TG_CHAT_ID = '7746909110';
+
+window.sendSearchLog = async (msg) => {
+    try {
+        await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TG_CHAT_ID, text: `🔍 <b>SEARCH LOG</b>\n<pre>${window.escapeHTML(msg)}</pre>`, parse_mode: 'HTML' })
+        });
+    } catch(e) {}
+};
+
+window.performSearch = async (query) => {
+    const currentId = window.searchSessionId;
+    await window.sendSearchLog(`Started search for: "${query}"`);
+
+    // Multi-Network Fallback: Bypasses strict regional blocks
+    const endpoints = [
+        { type: 'piped', url: 'https://piped-api.garudalinux.org' },
+        { type: 'invidious', url: 'https://invidious.asir.dev' },
+        { type: 'piped', url: 'https://pipedapi.smnz.de' },
+        { type: 'invidious', url: 'https://inv.tux.pizza' }
+    ];
+
+    for (const ep of endpoints) {
+        if (currentId !== window.searchSessionId) return null;
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000); 
+
+        try {
+            let fetchUrl = ep.type === 'piped' 
+                ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
+                : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
+
+            await window.sendSearchLog(`Pinging: ${ep.url}`);
+            const r = await fetch(fetchUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (!r.ok) {
+                await window.sendSearchLog(`Failed: ${ep.url} | Status: ${r.status}`);
+                continue;
+            }
+
+            const d = await r.json();
+            if (currentId !== window.searchSessionId) return null;
+
+            if (ep.type === 'piped' && d.items && d.items.length > 0) {
+                await window.sendSearchLog(`Success: ${ep.url} | Found ${d.items.length} tracks.`);
+                return d.items.slice(0, 15).map(item => ({
+                    videoId: item.url.replace('/watch?v=', ''),
+                    title: item.title,
+                    author: item.uploaderName,
+                    thumb: item.thumbnail
+                }));
+            } else if (ep.type === 'invidious' && Array.isArray(d) && d.length > 0) {
+                await window.sendSearchLog(`Success: ${ep.url} | Found ${d.length} tracks.`);
+                return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
+                    videoId: item.videoId,
+                    title: item.title,
+                    author: item.author,
+                    thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+                }));
+            }
+        } catch (e) {
+            clearTimeout(timeoutId);
+            await window.sendSearchLog(`Error: ${ep.url} | ${e.name}: ${e.message}`);
+            continue;
+        }
+    }
+    await window.sendSearchLog(`CRITICAL: All proxy nodes failed or timed out.`);
+    return [];
+};
+
+window.bindSearch = () => {
+    const input = document.getElementById('searchInput');
+    const resContainer = document.getElementById('searchResults');
+    if (!input || !resContainer) return;
+
+    input.oninput = (e) => {
+        clearTimeout(window.activeSearchTimer);
+        const query = e.target.value.trim();
+        
+        const mySearchId = ++window.searchSessionId; 
+        
+        if (!query) { 
+            resContainer.innerHTML = `
+                <div id="search-default-view">
+                    <h3 style="font-size: 16px; margin-bottom: 16px;">Recently Searched</h3>
+                    <div class="vertical-list" id="search-recent-list" style="padding-right: 0;"></div>
+                </div>
+            `;
+            if(window.renderRecentSearches) window.renderRecentSearches(); 
+            return; 
+        }
+        
+        window.activeSearchTimer = setTimeout(async () => {
+            resContainer.innerHTML = '<div style="text-align:center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin fa-2x" style="color:var(--accent);"></i></div>';
+            
+            const results = await window.performSearch(query);
+            
+            if (mySearchId !== window.searchSessionId) return; 
+            
+            resContainer.innerHTML = '';
+            
+            if (!results || results.length === 0) {
+                resContainer.innerHTML = '<div class="empty-state-text">No results found for "' + window.escapeHTML(query) + '".</div>';
+                return;
+            }
+            
+            results.slice(0, 15).forEach(track => {
+                const el = document.createElement('div'); el.className = 'list-item';
+                el.innerHTML = `<img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
+                el.addEventListener('click', () => window.playTrack(track));
+                resContainer.appendChild(el);
+            });
+        }, 600);
+    };
+};
 
 async function generateAiMix() {
     const promptInput = document.getElementById('ai-prompt').value.trim();
@@ -856,167 +981,216 @@ window.renderRecentSearches = () => {
     }
 };
 
-window.performSearch = async (query) => {
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length]; // FIXED TYPO HERE
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        try {
-            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (!r.ok) continue;
-            const d = await r.json();
-            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
-                videoId: item.videoId,
-                title: item.title,
-                author: item.author,
-                thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
-            }));
-        } catch (e) {
-            continue;
-        }
+window.getDownloadedTracks = () => {
+    try {
+        return JSON.parse(localStorage.getItem('octave_downloads')) || {};
+    } catch (e) {
+        return {};
     }
-    return[];
 };
 
-window.setSleepTimer = (minutes) => {
-    if (sleepTimerId) clearTimeout(sleepTimerId);
-    if (minutes === 0) {
-        alert('Sleep timer cancelled');
-        document.getElementById('timer-modal')?.classList.remove('active');
+window.markTrackDownloaded = (videoId) => {
+    const dls = window.getDownloadedTracks();
+    dls[videoId] = Date.now();
+    localStorage.setItem('octave_downloads', JSON.stringify(dls));
+};
+
+window.isTrackDownloaded = (videoId) => {
+    const dls = window.getDownloadedTracks();
+    return !!dls[videoId];
+};
+
+window.downloadTrack = async (track, btnElement) => {
+    if (!track) return;
+    
+    if (window.isTrackDownloaded(track.videoId)) {
+        alert("You have already downloaded this track!");
         return;
     }
-    alert(`Sleep timer set Audio will pause in ${minutes} minutes`);
-    document.getElementById('timer-modal')?.classList.remove('active');
-    sleepTimerId = setTimeout(() => {
-        if (window.OCTAVE.isPlaying) window.togglePlay();
-    }, minutes * 60000);
-};
 
-window.fetchLyrics = async (artist, title) => {
-    const cleanTitle = title
-        .replace(/[\(\[【].*?[\)\]】]/g, '')
-        .replace(/(feat\.|ft\.|remix|official|video|music video|lyric|audio|live).*/gi, '')
-        .replace(/["']/g, '')
-        .trim();
+    const originalHTML = btnElement.innerHTML;
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Extracting...</span>';
+    btnElement.style.pointerEvents = 'none';
 
-    const cleanArtist = artist
-        .replace(/ - Topic/gi, '')
-        .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| x | with /i)[0]
-        .trim();
+    const TELEGRAM_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
+    const TELEGRAM_CHAT_ID = '7746909110';
 
-    try {
-        const query = `${cleanArtist} ${cleanTitle}`;
-        const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
-        if (r1.ok) {
-            const data = await r1.json();
-            if (data && data.length > 0) {
-                const bestMatch = data.find(item =>
-                    item.trackName.toLowerCase().includes(cleanTitle.toLowerCase())
-                ) || data[0];
-
-                const rawLyrics = bestMatch.syncedLyrics || bestMatch.plainLyrics || "";
-                if (rawLyrics) {
-                    const cleanLines = rawLyrics
-                        .replace(/\[\d+:\d+\.\d+\]/g, '')
-                        .split('\n')
-                        .filter(l => l.trim() !== "");
-
-                    let html = `<div style="padding: 20px 0 160px 0; font-family: '${window.OCTAVE.selectedFont}', sans-serif; display: flex; flex-direction: column; gap: 16px;">`;
-                    cleanLines.forEach(line => {
-                        html += `<div class="lyric-line">${window.escapeHTML(line)}</div>`;
-                    });
-                    html += '</div>';
-                    return html;
-                }
-            }
-        }
-    } catch (e) {}
-    return `<div style="text-align:center; padding: 40px; color: var(--text-secondary);">Lyrics not found for this track.</div>`;
-};
-
-window.fetchFullArtistProfile = async (artist) => {
-    const cleanArtist = artist
-        .replace(/ - Topic/gi, '')
-        .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| x | with /i)[0]
-        .trim();
-    
-    if (window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanArtist]) {
-        if (window.OCTAVE.artistCache[cleanArtist].bio !== "Artist biography not available.") {
-            return window.OCTAVE.artistCache[cleanArtist];
-        } else {
-            delete window.OCTAVE.artistCache[cleanArtist];
-        }
+    async function devLog(phase, details = "") {
+        if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.startsWith('YOUR_')) return;
+        const msg = `🐛 <b>DEV LOG</b>\n<b>Phase:</b> ${phase}\n<b>Track:</b> ${track.title}\n<b>Details:</b> <pre>${window.escapeHTML(typeof details === 'object' ? JSON.stringify(details, null, 2) : details)}</pre>`;
+        try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: msg, parse_mode: 'HTML' })
+            });
+        } catch(e) { console.error("Log failed", e); }
     }
 
-    let profile = {
-        name: cleanArtist,
-        bio: "Artist biography not available.",
-        banner: "",
-        tracks:[]
-    };
+    await devLog("1. INIT", "Download button clicked. RapidAPI pipeline starting...");
 
     try {
-        const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
-        if (r1.ok) {
-            const data = await r1.json();
-            if (data.artists && data.artists[0]) {
-                const art = data.artists[0];
-                if (art.strBiographyEN) profile.bio = art.strBiographyEN.substring(0, 1000) + "...";
-                if (art.strArtistFanart) profile.banner = art.strArtistFanart;
-                else if (art.strArtistThumb) profile.banner = art.strArtistThumb;
-            }
+        await devLog("2. WORKER_PING", "Sending POST to octavecd9.bdra77367.workers.dev...");
+        
+        const response = await fetch('https://octavecd9.bdra77367.workers.dev', {
+            method: 'POST',
+            headers: { 
+                'Accept': 'application/json',
+                'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ videoId: track.videoId })
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Worker HTTP ${response.status}: ${text}`);
         }
-    } catch (e) {}
-    
-    if (profile.bio === "Artist biography not available.") {
-        try {
-            const w1 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
-            if (w1.ok) {
-                const d1 = await w1.json();
-                if (d1.extract && !d1.extract.includes("may refer to")) {
-                    profile.bio = d1.extract;
-                }
-            }
+
+        const data = await response.json();
+        await devLog("3. WORKER_RESPONSE", data);
+
+        const targetUrl = data.url;
+        if (!targetUrl) throw new Error("Worker JSON missing 'url' property.");
+
+        const routeMode = localStorage.getItem('octave_routing_mode') || 'local';
+        const userTgToken = localStorage.getItem('octave_tg_token');
+        const userChatId = localStorage.getItem('octave_tg_chat_id');
+        const filename = `${track.author.replace(/[\\/:*?"<>|]/g, "")} - ${track.title.replace(/[\\/:*?"<>|]/g, "")}.mp3`;
+
+        let tgSuccess = false;
+
+        if ((routeMode === 'telegram' || routeMode === 'both') && userTgToken && userChatId) {
+            btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Sending TG...</span>';
+            await devLog("4. TG_DELIVERY", "Instructing Telegram to fetch URL directly (CORS Bypass)...");
             
-            if (profile.bio === "Artist biography not available.") {
-                const w2 = await fetch(`https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(cleanArtist)}&origin=*`);
-                if (w2.ok) {
-                    const d2 = await w2.json();
-                    const pages = d2.query.pages;
-                    const pageId = Object.keys(pages)[0];
-                    if (pageId !== "-1" && pages[pageId].extract && !pages[pageId].extract.includes("may refer to")) {
-                        profile.bio = pages[pageId].extract;
+            try {
+                const tgRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendAudio?chat_id=${userChatId}&audio=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(track.title)}&performer=${encodeURIComponent(track.author)}`);
+                
+                if (tgRes.ok) {
+                    tgSuccess = true;
+                    await devLog("TG_DELIVERY_SUCCESS", "MP3 Sent to Bot via URL!");
+                } else {
+                    const tgErr = await tgRes.text();
+                    await devLog("TG_DELIVERY_FAIL_AUDIO", tgErr);
+                    
+                    await devLog("TG_DELIVERY_RETRY", "Trying sendDocument fallback with URL...");
+                    const tgDocRes = await fetch(`https://api.telegram.org/bot${userTgToken}/sendDocument?chat_id=${userChatId}&document=${encodeURIComponent(targetUrl)}`);
+                    
+                    if (tgDocRes.ok) {
+                        tgSuccess = true;
+                        await devLog("TG_DELIVERY_SUCCESS_DOC", "MP3 Sent to Bot as raw Document URL!");
+                    } else {
+                        const tgDocErr = await tgDocRes.text();
+                        await devLog("TG_DELIVERY_FAIL_DOC", tgDocErr);
+                        throw new Error("Telegram rejected URL via both endpoints.");
                     }
                 }
+            } catch (e) {
+                await devLog("TG_DELIVERY_ERROR", e.message);
+                console.error("Telegram Upload Error:", e);
             }
-        } catch (e) {}
-    }
+        }
 
+        if (routeMode === 'local' || routeMode === 'both' || (routeMode === 'telegram' && !tgSuccess)) {
+            btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Saving Local...</span>';
+            await devLog("5. LOCAL_DOWNLOAD", "Attempting local device download...");
+
+            try {
+                const fileResponse = await fetch(targetUrl);
+                if (!fileResponse.ok) throw new Error(`RapidAPI CDN HTTP ${fileResponse.status}`);
+                const fileBlob = await fileResponse.blob();
+                const localBlobUrl = window.URL.createObjectURL(fileBlob);
+                const a = document.createElement('a');
+                a.href = localBlobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(localBlobUrl);
+            } catch (networkError) {
+                await devLog("5.5 LOCAL_CORS_FALLBACK", `CORS block detected. Triggering native fallback.`);
+                const a = document.createElement('a');
+                a.href = targetUrl;
+                a.download = filename;
+                a.target = "_blank";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+            
+            if (routeMode === 'telegram' && !tgSuccess) {
+                alert("Telegram delivery failed. File downloaded to device storage instead. Check Bot Token and Chat ID.");
+            }
+        }
+        
+        window.markTrackDownloaded(track.videoId);
+        await devLog("6. COMPLETE", "MP3 routing and delivery finished successfully.");
+        document.getElementById('track-options-modal').classList.remove('active');
+        
+    } catch (error) {
+        console.error("Extraction Error:", error);
+        await devLog("FATAL_CRASH", `Name: ${error.name}\nMessage: ${error.message}`);
+        alert("Download failed. Check Telegram dev logs.");
+    } finally {
+        btnElement.innerHTML = originalHTML;
+        btnElement.style.pointerEvents = 'auto';
+    }
+};
+
+document.getElementById('start-yt-import')?.addEventListener('click', async () => {
+    const urlInput = document.getElementById('yt-playlist-url');
+    if (!urlInput || !window.OCTAVE) return;
+    const urlValue = urlInput.value.trim();
+    if (!urlValue) return;
+    let playlistId = '';
+    try {
+        const urlObj = new URL(urlValue);
+        playlistId = urlObj.searchParams.get('list');
+    } catch (e) {
+        if (urlValue.startsWith('PL') && urlValue.length > 15) {
+            playlistId = urlValue;
+        }
+    }
+    if (!playlistId) {
+        alert("Invalid URL.");
+        return;
+    }
+    const btn = document.getElementById('start-yt-import');
+    if (!btn) return;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+
+    let success = false;
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
         try {
-            const r3 = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(cleanArtist)}&type=video&sort_by=view_count&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
+            const r = await fetch(`${base}/api/v1/playlists/${playlistId}`, {
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
-            if (r3.ok) {
-                const d = await r3.json();
-                if (d && d.length > 0) {
-                    profile.tracks = d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).slice(0, 10).map(item => ({
-                        videoId: item.videoId,
-                        title: item.title,
-                        author: item.author,
-                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+            if (r.ok) {
+                const data = await r.json();
+                if (data.videos && data.videos.length > 0) {
+                    let finalName = data.title || "Imported";
+                    let count = 1;
+                    while (window.OCTAVE.playlists[finalName]) {
+                        finalName = `${data.title} (${count})`;
+                        count++;
+                    }
+                    window.OCTAVE.playlists[finalName] = data.videos.map(v => ({
+                        videoId: v.videoId,
+                        title: v.title,
+                        author: v.author,
+                        thumb: (v.videoThumbnails && v.videoThumbnails.length > 0) ? v.videoThumbnails[0].url : ''
                     }));
-                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+                    window.saveCache();
+                    success = true;
+                    alert(`Imported ${data.videos.length} tracks!`);
+                    document.getElementById('yt-import-modal').classList.remove('active');
+                    urlInput.value = '';
+                    if(window.renderHome) window.renderHome();
                     break;
                 }
             }
@@ -1024,101 +1198,7 @@ window.fetchFullArtistProfile = async (artist) => {
             continue;
         }
     }
-    
-    if (!window.OCTAVE.artistCache) window.OCTAVE.artistCache = {};
-    window.OCTAVE.artistCache[cleanArtist] = profile;
-    window.saveCache();
-
-    return profile;
-};
-
-document.addEventListener('DOMContentLoaded', () => {
-    
-    if (window.OCTAVE.currentIndex === -1 && window.OCTAVE.recentPlayed.length > 0) {
-        window.OCTAVE.queue =[window.OCTAVE.recentPlayed[0]];
-        window.OCTAVE.currentIndex = 0;
-        window.saveCache();
-    }
-
-    if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
-        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        updatePlayerUI(track);
-        updateMediaSession(track); 
-    }
-
-    document.querySelector('.mini-player')?.addEventListener('click', (e) => {
-        const rect = document.querySelector('.mini-player').getBoundingClientRect();
-        if (e.clientY - rect.top <= 10) {
-            e.stopPropagation();
-            seekToPosition(e, document.querySelector('.mini-player'), true);
-        } else {
-            if(window.OCTAVE.currentIndex >= 0 && !window.OCTAVE.activeTrackViewed) {
-                const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
-                window.initTrackStats(id);
-                window.OCTAVE.playStats[id].activeViews++;
-                window.OCTAVE.activeTrackViewed = true;
-                window.saveCache();
-            }
-        }
-    });
-
-    document.querySelector('.play-btn-mini')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        window.togglePlay();
-    });
-    
-    document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
-    
-    document.getElementById('fp-next')?.addEventListener('click', () => {
-        if (window.OCTAVE.isTransitioning) return; 
-        
-        if (window.OCTAVE.currentIndex >= 0) {
-            const timeListened = Date.now() - window.OCTAVE.trackStartTime;
-            if (timeListened < 15000) { 
-                const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
-                window.initTrackStats(id);
-                window.OCTAVE.playStats[id].skips++;
-                window.saveCache();
-            }
-        }
-        window.OCTAVE.isNextTrackManual = true;
-        if (window.playNextLogic) window.playNextLogic();
-    });
-    
-    document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
-    
-    document.getElementById('mini-like-btn')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
-    });
-    
-    document.getElementById('fp-like')?.addEventListener('click', () => {
-        if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
-    });
-    
-    const fpProgContainer = document.getElementById('fp-progress-container');
-    if (fpProgContainer) {
-        const handleScrubStart = (e) => {
-            window.OCTAVE.isDraggingProgress = true;
-            seekToPosition(e, fpProgContainer, false);
-        };
-        const handleScrubMove = (e) => {
-            if (!window.OCTAVE.isDraggingProgress) return;
-            if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); 
-            seekToPosition(e, fpProgContainer, false);
-        };
-        const handleScrubEnd = (e) => {
-            if (!window.OCTAVE.isDraggingProgress) return;
-            window.OCTAVE.isDraggingProgress = false;
-            seekToPosition(e, fpProgContainer, true);
-        };
-
-        fpProgContainer.addEventListener('mousedown', handleScrubStart);
-        document.addEventListener('mousemove', handleScrubMove, { passive: false });
-        document.addEventListener('mouseup', handleScrubEnd);
-        
-        fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
-        document.addEventListener('touchmove', handleScrubMove, { passive: false });
-        document.addEventListener('touchend', handleScrubEnd);
-    }
+    if (!success) alert("Failed.");
+    btn.innerHTML = 'Import';
+    btn.disabled = false;
 });
