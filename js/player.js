@@ -758,25 +758,56 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     }
 }
 
-// FIXED: Migrated search function to Piped API bypassing blocked Invidious proxies
-window.performSearch = async (query) => {
+// ==========================================
+// TELEGRAM DEV LOGGER FOR SEARCH DEBUGGING
+// ==========================================
+const TG_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
+const TG_CHAT_ID = '7746909110';
+
+window.sendDevLog = async (phase, details = "") => {
     try {
-        const r = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=music_songs`);
-        if (r.ok) {
-            const data = await r.json();
-            if (data && data.items && data.items.length > 0) {
-                return data.items.slice(0, 15).map(item => ({
-                    videoId: item.url.replace('/watch?v=', ''),
-                    title: item.title,
-                    author: item.uploaderName,
-                    thumb: item.thumbnail
-                }));
-            }
+        let msg = `🐛 <b>DEV LOG</b>\n<b>Phase:</b> ${phase}\n<b>Details:</b> <pre>${window.escapeHTML(typeof details === 'object' ? JSON.stringify(details, null, 2) : String(details))}</pre>`;
+        await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TG_CHAT_ID, text: msg, parse_mode: 'HTML' })
+        });
+    } catch(e) { console.error("TG Log failed", e); }
+};
+
+window.performSearch = async (query) => {
+    await window.sendDevLog("SEARCH_INIT", `Initiating search for: ${query}`);
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        try {
+            await window.sendDevLog("SEARCH_PING", `Hitting proxy node: ${base}`);
+            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            
+            await window.sendDevLog("SEARCH_RESPONSE", `Node: ${base}\nHTTP Status: ${r.status}\nOK: ${r.ok}`);
+            if (!r.ok) continue;
+            
+            const d = await r.json();
+            await window.sendDevLog("SEARCH_SUCCESS", `Node: ${base}\nFound ${Array.isArray(d) ? d.length : 'unknown'} results.`);
+            
+            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
+                videoId: item.videoId,
+                title: item.title,
+                author: item.author,
+                thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+            }));
+        } catch (e) {
+            await window.sendDevLog("SEARCH_ERROR", `Node: ${base}\nError Type: ${e.name}\nMessage: ${e.message}`);
+            continue;
         }
-    } catch (e) {
-        console.warn("Piped search failed", e);
     }
-    return [];
+    await window.sendDevLog("SEARCH_FAILED_ALL", "All proxy nodes timed out or rejected the request.");
+    return[];
 };
 
 window.setSleepTimer = (minutes) => {
@@ -895,21 +926,31 @@ window.fetchFullArtistProfile = async (artist) => {
         } catch (e) {}
     }
 
-    try {
-        const r3 = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(cleanArtist)}&filter=music_songs`);
-        if (r3.ok) {
-            const data = await r3.json();
-            if (data && data.items && data.items.length > 0) {
-                profile.tracks = data.items.slice(0, 10).map(item => ({
-                    videoId: item.url.replace('/watch?v=', ''),
-                    title: item.title,
-                    author: item.uploaderName,
-                    thumb: item.thumbnail
-                }));
+    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        try {
+            const r3 = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(cleanArtist)}&type=video&sort_by=view_count&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            if (r3.ok) {
+                const d = await r3.json();
+                if (d && d.length > 0) {
+                    profile.tracks = d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).slice(0, 10).map(item => ({
+                        videoId: item.videoId,
+                        title: item.title,
+                        author: item.author,
+                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+                    }));
+                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
+                    break;
+                }
             }
+        } catch (e) {
+            continue;
         }
-    } catch (e) {
-        console.warn("Piped artist search failed", e);
     }
     
     if (!window.OCTAVE.artistCache) window.OCTAVE.artistCache = {};
