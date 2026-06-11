@@ -404,7 +404,7 @@ window.sendSearchLog = async (msg) => {
 
 window.performSearch = async (query) => {
     const currentId = window.searchSessionId;
-    await window.sendSearchLog(`Started search for: "${query}" (VIA CORS PROXY)`);
+    await window.sendSearchLog(`Started search for: "${query}" (VIA FAST PROXY)`);
 
     // Multi-Network Fallback
     const endpoints = [
@@ -418,15 +418,16 @@ window.performSearch = async (query) => {
         if (currentId !== window.searchSessionId) return null;
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000); 
+        // BUMPED TIMEOUT TO 12 SECONDS
+        const timeoutId = setTimeout(() => controller.abort(), 12000); 
 
         try {
             let rawUrl = ep.type === 'piped' 
                 ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
                 : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
 
-            // Mask the URL through a public CORS Proxy to bypass local ISP / Brave Shields blocking
-            let fetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`;
+            // SWAPPED TO FASTER, UNBLOCKED CORS PROXY
+            let fetchUrl = `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`;
 
             await window.sendSearchLog(`Pinging via Proxy: ${ep.url}`);
             const r = await fetch(fetchUrl, { signal: controller.signal });
