@@ -1,6 +1,6 @@
 // ============================================================
 // app.js — Octave Full Flagship Engine
-// 100% Complete File - Search Multi-Node Bypass + Telegram Logger
+// 100% Complete File - Search Multi-Node Bypass + CORS Proxy
 // ============================================================
 
 (function() {
@@ -404,9 +404,9 @@ window.sendSearchLog = async (msg) => {
 
 window.performSearch = async (query) => {
     const currentId = window.searchSessionId;
-    await window.sendSearchLog(`Started search for: "${query}"`);
+    await window.sendSearchLog(`Started search for: "${query}" (VIA CORS PROXY)`);
 
-    // Multi-Network Fallback: Bypasses strict regional blocks
+    // Multi-Network Fallback
     const endpoints = [
         { type: 'piped', url: 'https://piped-api.garudalinux.org' },
         { type: 'invidious', url: 'https://invidious.asir.dev' },
@@ -418,14 +418,17 @@ window.performSearch = async (query) => {
         if (currentId !== window.searchSessionId) return null;
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000); 
+        const timeoutId = setTimeout(() => controller.abort(), 8000); 
 
         try {
-            let fetchUrl = ep.type === 'piped' 
+            let rawUrl = ep.type === 'piped' 
                 ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
                 : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
 
-            await window.sendSearchLog(`Pinging: ${ep.url}`);
+            // Mask the URL through a public CORS Proxy to bypass local ISP / Brave Shields blocking
+            let fetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`;
+
+            await window.sendSearchLog(`Pinging via Proxy: ${ep.url}`);
             const r = await fetch(fetchUrl, { signal: controller.signal });
             clearTimeout(timeoutId);
 
