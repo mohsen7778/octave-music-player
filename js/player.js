@@ -124,23 +124,12 @@ window.importVault = (event) => {
 };
 
 window.INVIDIOUS =[
+    'https://inv.tux.pizza',
+    'https://invidious.asir.dev',
+    'https://invidious.projectsegfau.lt',
     'https://inv.nadeko.net',
-    'https://invidious.privacyredirect.com',
-    'https://invidious.nerdvpn.de',
-    'https://iv.melmac.space',
-    'https://invidious.io.lol',
-    'https://invidious.lunar.icu'
+    'https://invidious.privacyredirect.com'
 ];
-
-fetch('https://api.invidious.io/instances.json?sort_by=health')
-    .then(res => res.json())
-    .then(data => {
-        const healthy = data
-            .filter(inst => inst[1].type === 'https' && inst[1].api === true)
-            .map(inst => inst[1].uri);
-        if (healthy.length > 0) window.INVIDIOUS = [...new Set([...healthy, ...window.INVIDIOUS])];
-    })
-    .catch(() => console.warn('Using fallback instances'));
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
 
@@ -769,307 +758,104 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     }
 }
 
-// --- SEARCH ENGINE & BOT LOGGER ---
-window.searchSessionId = 0;
-
-const TG_BOT_TOKEN = '7967587608:AAFmy_hxZvnkPl3g2h6Bj0WN58Qn2X0FIaE';
-const TG_CHAT_ID = '7746909110';
-
-window.sendSearchLog = async (msg) => {
+function initPlayerDOM() {
     try {
-        await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: TG_CHAT_ID, text: `🔍 <b>SEARCH LOG</b>\n<pre>${window.escapeHTML(msg)}</pre>`, parse_mode: 'HTML' })
+        if (window.OCTAVE.currentIndex === -1 && window.OCTAVE.recentPlayed.length > 0) {
+            window.OCTAVE.queue = [window.OCTAVE.recentPlayed[0]];
+            window.OCTAVE.currentIndex = 0;
+            window.saveCache();
+        }
+
+        if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
+            const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+            if (track) {
+                updatePlayerUI(track);
+                updateMediaSession(track); 
+            }
+        }
+
+        document.querySelector('.mini-player')?.addEventListener('click', (e) => {
+            const rect = document.querySelector('.mini-player').getBoundingClientRect();
+            if (e.clientY - rect.top <= 10) {
+                e.stopPropagation();
+                seekToPosition(e, document.querySelector('.mini-player'), true);
+            } else {
+                if(window.OCTAVE.currentIndex >= 0 && !window.OCTAVE.activeTrackViewed) {
+                    const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
+                    window.initTrackStats(id);
+                    window.OCTAVE.playStats[id].activeViews++;
+                    window.OCTAVE.activeTrackViewed = true;
+                    window.saveCache();
+                }
+            }
         });
-    } catch(e) {}
-};
 
-window.performSearch = async (query) => {
-    window.searchSessionId = (window.searchSessionId || 0) + 1;
-    const currentId = window.searchSessionId;
-    await window.sendSearchLog(`Started original search for: "${query}"`);
-
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        if (currentId !== window.searchSessionId) return null;
-        
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        
-        try {
-            await window.sendSearchLog(`Pinging Original: ${base}`);
-            const r = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            
-            if (!r.ok) {
-                await window.sendSearchLog(`Failed: ${base} | Status: ${r.status}`);
-                continue;
-            }
-            
-            const d = await r.json();
-            if (currentId !== window.searchSessionId) return null;
-            
-            await window.sendSearchLog(`Success: ${base} | Found ${Array.isArray(d) ? d.length : 'unknown'} results.`);
-            
-            window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
-                videoId: item.videoId,
-                title: item.title,
-                author: item.author,
-                thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
-            }));
-        } catch (e) {
-            clearTimeout(timeoutId);
-            await window.sendSearchLog(`Error: ${base} | ${e.name}: ${e.message}`);
-            continue;
-        }
-    }
-    await window.sendSearchLog(`CRITICAL: All original proxy nodes failed.`);
-    return[];
-};
-
-window.setSleepTimer = (minutes) => {
-    if (sleepTimerId) clearTimeout(sleepTimerId);
-    if (minutes === 0) {
-        alert('Sleep timer cancelled');
-        document.getElementById('timer-modal')?.classList.remove('active');
-        return;
-    }
-    alert(`Sleep timer set Audio will pause in ${minutes} minutes`);
-    document.getElementById('timer-modal')?.classList.remove('active');
-    sleepTimerId = setTimeout(() => {
-        if (window.OCTAVE.isPlaying) window.togglePlay();
-    }, minutes * 60000);
-};
-
-window.fetchLyrics = async (artist, title) => {
-    const cleanTitle = title
-        .replace(/[\(\[【].*?[\)\]】]/g, '')
-        .replace(/(feat\.|ft\.|remix|official|video|music video|lyric|audio|live).*/gi, '')
-        .replace(/["']/g, '')
-        .trim();
-
-    const cleanArtist = artist
-        .replace(/ - Topic/gi, '')
-        .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| x | with /i)[0]
-        .trim();
-
-    try {
-        const query = `${cleanArtist} ${cleanTitle}`;
-        const r1 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
-        if (r1.ok) {
-            const data = await r1.json();
-            if (data && data.length > 0) {
-                const bestMatch = data.find(item =>
-                    item.trackName.toLowerCase().includes(cleanTitle.toLowerCase())
-                ) || data[0];
-
-                const rawLyrics = bestMatch.syncedLyrics || bestMatch.plainLyrics || "";
-                if (rawLyrics) {
-                    const cleanLines = rawLyrics
-                        .replace(/\[\d+:\d+\.\d+\]/g, '')
-                        .split('\n')
-                        .filter(l => l.trim() !== "");
-
-                    let html = `<div style="padding: 20px 0 160px 0; font-family: '${window.OCTAVE.selectedFont}', sans-serif; display: flex; flex-direction: column; gap: 16px;">`;
-                    cleanLines.forEach(line => {
-                        html += `<div class="lyric-line">${window.escapeHTML(line)}</div>`;
-                    });
-                    html += '</div>';
-                    return html;
-                }
-            }
-        }
-    } catch (e) {}
-    return `<div style="text-align:center; padding: 40px; color: var(--text-secondary);">Lyrics not found for this track.</div>`;
-};
-
-window.fetchFullArtistProfile = async (artist) => {
-    const cleanArtist = artist
-        .replace(/ - Topic/gi, '')
-        .replace(/VEVO/gi, '')
-        .split(/,|&| ft\.| feat\.| x | with /i)[0]
-        .trim();
-    
-    if (window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanArtist]) {
-        if (window.OCTAVE.artistCache[cleanArtist].bio !== "Artist biography not available.") {
-            return window.OCTAVE.artistCache[cleanArtist];
-        } else {
-            delete window.OCTAVE.artistCache[cleanArtist];
-        }
-    }
-
-    let profile = {
-        name: cleanArtist,
-        bio: "Artist biography not available.",
-        banner: "",
-        tracks:[]
-    };
-
-    try {
-        const r1 = await fetch(`https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(cleanArtist)}`);
-        if (r1.ok) {
-            const data = await r1.json();
-            if (data.artists && data.artists[0]) {
-                const art = data.artists[0];
-                if (art.strBiographyEN) profile.bio = art.strBiographyEN.substring(0, 1000) + "...";
-                if (art.strArtistFanart) profile.banner = art.strArtistFanart;
-                else if (art.strArtistThumb) profile.banner = art.strArtistThumb;
-            }
-        }
-    } catch (e) {}
-    
-    if (profile.bio === "Artist biography not available.") {
-        try {
-            const w1 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanArtist)}`);
-            if (w1.ok) {
-                const d1 = await w1.json();
-                if (d1.extract && !d1.extract.includes("may refer to")) {
-                    profile.bio = d1.extract;
-                }
-            }
-            
-            if (profile.bio === "Artist biography not available.") {
-                const w2 = await fetch(`https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(cleanArtist)}&origin=*`);
-                if (w2.ok) {
-                    const d2 = await w2.json();
-                    const pages = d2.query.pages;
-                    const pageId = Object.keys(pages)[0];
-                    if (pageId !== "-1" && pages[pageId].extract && !pages[pageId].extract.includes("may refer to")) {
-                        profile.bio = pages[pageId].extract;
-                    }
-                }
-            }
-        } catch (e) {}
-    }
-
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        try {
-            const r3 = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(cleanArtist)}&type=video&sort_by=view_count&fields=videoId,title,author,videoThumbnails,lengthSeconds`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (r3.ok) {
-                const d = await r3.json();
-                if (d && d.length > 0) {
-                    profile.tracks = d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).slice(0, 10).map(item => ({
-                        videoId: item.videoId,
-                        title: item.title,
-                        author: item.author,
-                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
-                    }));
-                    window.invIdx = (window.invIdx + i) % window.INVIDIOUS.length;
-                    break;
-                }
-            }
-        } catch (e) {
-            continue;
-        }
-    }
-    
-    if (!window.OCTAVE.artistCache) window.OCTAVE.artistCache = {};
-    window.OCTAVE.artistCache[cleanArtist] = profile;
-    window.saveCache();
-
-    return profile;
-};
-
-document.addEventListener('DOMContentLoaded', () => {
-    
-    if (window.OCTAVE.currentIndex === -1 && window.OCTAVE.recentPlayed.length > 0) {
-        window.OCTAVE.queue =[window.OCTAVE.recentPlayed[0]];
-        window.OCTAVE.currentIndex = 0;
-        window.saveCache();
-    }
-
-    if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
-        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        if (track) {
-            updatePlayerUI(track);
-            updateMediaSession(track); 
-        }
-    }
-
-    document.querySelector('.mini-player')?.addEventListener('click', (e) => {
-        const rect = document.querySelector('.mini-player').getBoundingClientRect();
-        if (e.clientY - rect.top <= 10) {
+        document.querySelector('.play-btn-mini')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            seekToPosition(e, document.querySelector('.mini-player'), true);
-        } else {
-            if(window.OCTAVE.currentIndex >= 0 && !window.OCTAVE.activeTrackViewed) {
-                const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
-                window.initTrackStats(id);
-                window.OCTAVE.playStats[id].activeViews++;
-                window.OCTAVE.activeTrackViewed = true;
-                window.saveCache();
-            }
-        }
-    });
-
-    document.querySelector('.play-btn-mini')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        window.togglePlay();
-    });
-    
-    document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
-    
-    document.getElementById('fp-next')?.addEventListener('click', () => {
-        if (window.OCTAVE.isTransitioning) return; 
+            window.togglePlay();
+        });
         
-        if (window.OCTAVE.currentIndex >= 0) {
-            const timeListened = Date.now() - window.OCTAVE.trackStartTime;
-            if (timeListened < 15000) { 
-                const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
-                window.initTrackStats(id);
-                window.OCTAVE.playStats[id].skips++;
-                window.saveCache();
-            }
-        }
-        window.OCTAVE.isNextTrackManual = true;
-        if (window.playNextLogic) window.playNextLogic();
-    });
-    
-    document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
-    
-    document.getElementById('mini-like-btn')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
-    });
-    
-    document.getElementById('fp-like')?.addEventListener('click', () => {
-        if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
-    });
-    
-    const fpProgContainer = document.getElementById('fp-progress-container');
-    if (fpProgContainer) {
-        const handleScrubStart = (e) => {
-            window.OCTAVE.isDraggingProgress = true;
-            seekToPosition(e, fpProgContainer, false);
-        };
-        const handleScrubMove = (e) => {
-            if (!window.OCTAVE.isDraggingProgress) return;
-            if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); 
-            seekToPosition(e, fpProgContainer, false);
-        };
-        const handleScrubEnd = (e) => {
-            if (!window.OCTAVE.isDraggingProgress) return;
-            window.OCTAVE.isDraggingProgress = false;
-            seekToPosition(e, fpProgContainer, true);
-        };
-
-        fpProgContainer.addEventListener('mousedown', handleScrubStart);
-        document.addEventListener('mousemove', handleScrubMove, { passive: false });
-        document.addEventListener('mouseup', handleScrubEnd);
+        document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
         
-        fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
-        document.addEventListener('touchmove', handleScrubMove, { passive: false });
-        document.addEventListener('touchend', handleScrubEnd);
+        document.getElementById('fp-next')?.addEventListener('click', () => {
+            if (window.OCTAVE.isTransitioning) return; 
+            
+            if (window.OCTAVE.currentIndex >= 0) {
+                const timeListened = Date.now() - window.OCTAVE.trackStartTime;
+                if (timeListened < 15000) { 
+                    const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
+                    window.initTrackStats(id);
+                    window.OCTAVE.playStats[id].skips++;
+                    window.saveCache();
+                }
+            }
+            window.OCTAVE.isNextTrackManual = true;
+            if (window.playNextLogic) window.playNextLogic();
+        });
+        
+        document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
+        
+        document.getElementById('mini-like-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
+        });
+        
+        document.getElementById('fp-like')?.addEventListener('click', () => {
+            if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
+        });
+        
+        const fpProgContainer = document.getElementById('fp-progress-container');
+        if (fpProgContainer) {
+            const handleScrubStart = (e) => {
+                window.OCTAVE.isDraggingProgress = true;
+                seekToPosition(e, fpProgContainer, false);
+            };
+            const handleScrubMove = (e) => {
+                if (!window.OCTAVE.isDraggingProgress) return;
+                if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); 
+                seekToPosition(e, fpProgContainer, false);
+            };
+            const handleScrubEnd = (e) => {
+                if (!window.OCTAVE.isDraggingProgress) return;
+                window.OCTAVE.isDraggingProgress = false;
+                seekToPosition(e, fpProgContainer, true);
+            };
+
+            fpProgContainer.addEventListener('mousedown', handleScrubStart);
+            document.addEventListener('mousemove', handleScrubMove, { passive: false });
+            document.addEventListener('mouseup', handleScrubEnd);
+            
+            fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
+            document.addEventListener('touchmove', handleScrubMove, { passive: false });
+            document.addEventListener('touchend', handleScrubEnd);
+        }
+    } catch (domErr) {
+        console.warn("Recovered from DOMContentLoaded error inside player.js", domErr);
     }
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPlayerDOM);
+} else {
+    initPlayerDOM();
+}
