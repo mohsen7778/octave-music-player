@@ -1,6 +1,6 @@
 <div align="center">
 
-# Under Mentainance (due to 3 party server problems this player is no more functional until solved) 
+# Under maintenance (due to 3 party server problems this player is no more functional until solved) 
 
 **A fully private high performance client side music architecture running entirely in your browser with zero backend infrastructure.**
 
