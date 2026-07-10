@@ -62,10 +62,10 @@ window.fetchAutoDjBatch = async () => {
         if (topSeeds.length > 0) {
             for (const seed of topSeeds) {
                 for (let i = 0; i < window.INVIDIOUS.length; i++) {
-                    const base = window.INVISIOUS || window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+                    const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
                     try {
                         const controller = new AbortController();
-                        const id = setTimeout(() => controller.abort(), 3500); 
+                        const id = setTimeout(() => controller.abort(), 8000); 
                         const r = await fetch(`${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`, { signal: controller.signal });
                         clearTimeout(id);
                         if (r.ok) {
@@ -245,7 +245,7 @@ window.fetchDailyRecommendations = async () => {
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
         try {
             let url = '';
             if (topScored.length > 0) {
