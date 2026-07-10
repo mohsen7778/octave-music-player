@@ -404,65 +404,104 @@ window.sendSearchLog = async (msg) => {
 
 window.performSearch = async (query) => {
     const currentId = window.searchSessionId;
-    await window.sendSearchLog(`Started search for: "${query}" (VIA FAST PROXY)`);
+    await window.sendSearchLog(`Started search for: "${query}" (DIRECT, NO PROXY)`);
 
-    // Multi-Network Fallback
+    // Multi-Network Fallback. Piped/Invidious APIs already send permissive
+    // CORS headers (Access-Control-Allow-Origin: *), so we hit them directly.
+    // corsproxy.io was removed here: it now rejects any origin outside its own
+    // dev whitelist (localhost, CodeSandbox, etc), which is why search returned
+    // nothing on the deployed site (and worse on Brave, which strips Origin).
     const endpoints = [
         { type: 'piped', url: 'https://piped-api.garudalinux.org' },
         { type: 'invidious', url: 'https://invidious.asir.dev' },
         { type: 'piped', url: 'https://pipedapi.smnz.de' },
-        { type: 'invidious', url: 'https://inv.tux.pizza' }
+        { type: 'invidious', url: 'https://inv.tux.pizza' },
+        { type: 'invidious', url: 'https://inv.nadeko.net' },
+        { type: 'invidious', url: 'https://invidious.privacyredirect.com' },
+        { type: 'piped', url: 'https://api.piped.yt' }
     ];
+
+    // Fallback proxy used ONLY if every direct attempt fails (e.g. an instance
+    // temporarily drops its CORS header). allorigins doesn't gate by origin.
+    const proxyWrap = (rawUrl) => `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`;
+
+    const parseResult = (ep, d) => {
+        if (ep.type === 'piped' && d.items && d.items.length > 0) {
+            return d.items.slice(0, 15).map(item => ({
+                videoId: item.url.replace('/watch?v=', ''),
+                title: item.title,
+                author: item.uploaderName,
+                thumb: item.thumbnail
+            }));
+        } else if (ep.type === 'invidious' && Array.isArray(d) && d.length > 0) {
+            return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
+                videoId: item.videoId,
+                title: item.title,
+                author: item.author,
+                thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+            }));
+        }
+        return null;
+    };
 
     for (const ep of endpoints) {
         if (currentId !== window.searchSessionId) return null;
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000); 
+        const rawUrl = ep.type === 'piped'
+            ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
+            : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
 
+        // Attempt 1: direct fetch, no proxy
         try {
-            let rawUrl = ep.type === 'piped' 
-                ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
-                : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
+            await window.sendSearchLog(`Pinging direct: ${ep.url}`);
+            const r = await fetch(rawUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
 
-            let fetchUrl = `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`;
+            if (r.ok) {
+                const d = await r.json();
+                if (currentId !== window.searchSessionId) return null;
+                const parsed = parseResult(ep, d);
+                if (parsed) {
+                    await window.sendSearchLog(`Success (direct): ${ep.url} | Found ${parsed.length} tracks.`);
+                    return parsed;
+                }
+            } else {
+                await window.sendSearchLog(`Direct failed: ${ep.url} | Status: ${r.status}`);
+            }
+        } catch (e) {
+            await window.sendSearchLog(`Direct error: ${ep.url} | ${e.name}: ${e.message}`);
+        }
 
-            await window.sendSearchLog(`Pinging via Proxy: ${ep.url}`);
-            const r = await fetch(fetchUrl, { signal: controller.signal });
+        if (currentId !== window.searchSessionId) return null;
+
+        // Attempt 2: fallback proxy, only if direct failed
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            await window.sendSearchLog(`Retrying via fallback proxy: ${ep.url}`);
+            const r = await fetch(proxyWrap(rawUrl), { signal: controller.signal });
             clearTimeout(timeoutId);
 
             if (!r.ok) {
-                await window.sendSearchLog(`Failed: ${ep.url} | Status: ${r.status}`);
+                await window.sendSearchLog(`Proxy failed: ${ep.url} | Status: ${r.status}`);
                 continue;
             }
 
             const d = await r.json();
             if (currentId !== window.searchSessionId) return null;
-
-            if (ep.type === 'piped' && d.items && d.items.length > 0) {
-                await window.sendSearchLog(`Success: ${ep.url} | Found ${d.items.length} tracks.`);
-                return d.items.slice(0, 15).map(item => ({
-                    videoId: item.url.replace('/watch?v=', ''),
-                    title: item.title,
-                    author: item.uploaderName,
-                    thumb: item.thumbnail
-                }));
-            } else if (ep.type === 'invidious' && Array.isArray(d) && d.length > 0) {
-                await window.sendSearchLog(`Success: ${ep.url} | Found ${d.length} tracks.`);
-                return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
-                    videoId: item.videoId,
-                    title: item.title,
-                    author: item.author,
-                    thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
-                }));
+            const parsed = parseResult(ep, d);
+            if (parsed) {
+                await window.sendSearchLog(`Success (proxy): ${ep.url} | Found ${parsed.length} tracks.`);
+                return parsed;
             }
         } catch (e) {
-            clearTimeout(timeoutId);
-            await window.sendSearchLog(`Error: ${ep.url} | ${e.name}: ${e.message}`);
+            await window.sendSearchLog(`Proxy error: ${ep.url} | ${e.name}: ${e.message}`);
             continue;
         }
     }
-    await window.sendSearchLog(`CRITICAL: All proxy nodes failed or timed out.`);
+    await window.sendSearchLog(`CRITICAL: All nodes (direct + proxy) failed or timed out.`);
     return [];
 };
 
