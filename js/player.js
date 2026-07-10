@@ -177,11 +177,9 @@ document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
 function getStreamUrl(videoId) {
     const base = window.INVIDIOUS[window.invIdx];
-    // Cache-buster helps avoid stale/broken redirects
     return `${base}/latest_version?id=${videoId}&itag=140&_=${Date.now()}`;
 }
 
-// NEW: Fallback that scrapes the adaptiveFormats API for a direct audio URL
 async function fetchAudioUrlFromApi(videoId) {
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
@@ -192,7 +190,6 @@ async function fetchAudioUrlFromApi(videoId) {
             clearTimeout(id);
             if (r.ok) {
                 const d = await r.json();
-                // Opus/M4A audio itags in quality order
                 const audioItags = [251, 250, 249, 140, 141, 139];
                 const format = d.adaptiveFormats?.find(f => audioItags.includes(parseInt(f.itag)));
                 if (format && format.url) {
@@ -262,7 +259,6 @@ AUDIO.addEventListener('error', async () => {
     if (!window.OCTAVE.currentTrackErrorRetries) window.OCTAVE.currentTrackErrorRetries = 0;
     window.OCTAVE.currentTrackErrorRetries++;
 
-    // If we've exhausted all instances, try the API direct-url nuclear option
     if (window.OCTAVE.currentTrackErrorRetries >= window.INVIDIOUS.length) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         if (track) {
@@ -365,13 +361,41 @@ function handleTrackEnded() {
     if (window.playNextLogic) window.playNextLogic();
 }
 
+// FIX: Robust playNextLogic that handles queue end properly
 window.playNextLogic = () => {
     if (window.OCTAVE.isTransitioning) return; 
 
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
+        // There are more tracks in the queue - play the next one
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-    } else if (window.generateDiscoverMix) {
-        window.generateDiscoverMix(); 
+    } else if (window.OCTAVE.currentIndex >= window.OCTAVE.queue.length - 1) {
+        // We're at the end of the queue - try to fetch more tracks first
+        window.OCTAVE.isTransitioning = true;
+        const fpPlay = document.querySelector('#fp-play i');
+        if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin';
+
+        window.fetchAutoDjBatch().then(() => {
+            window.OCTAVE.isTransitioning = false;
+            if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
+                window.OCTAVE.isNextTrackManual = false;
+                window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
+            } else if (window.generateDiscoverMix) {
+                window.generateDiscoverMix();
+            } else {
+                window.OCTAVE.isPlaying = false;
+                updatePlayIcons('fa-solid fa-play');
+                clearInterval(progressTimer);
+            }
+        }).catch(() => {
+            window.OCTAVE.isTransitioning = false;
+            if (window.generateDiscoverMix) {
+                window.generateDiscoverMix();
+            } else {
+                window.OCTAVE.isPlaying = false;
+                updatePlayIcons('fa-solid fa-play');
+                clearInterval(progressTimer);
+            }
+        });
     } else {
         window.OCTAVE.isPlaying = false;
         updatePlayIcons('fa-solid fa-play');
@@ -386,11 +410,16 @@ function updatePlayIcons(iconClass) {
     if (fp) fp.className = iconClass;
 }
 
+// FIX: togglePlay now handles YTP not-ready state gracefully
 window.togglePlay = () => {
     if (window.OCTAVE.currentIndex === -1) return;
 
     if (activeEngine === 'iframe') {
-        if (!YTP) return;
+        if (!YTP || !ytReady) {
+            console.warn('Octave: YTP not ready yet, retrying in 500ms...');
+            setTimeout(window.togglePlay, 500);
+            return;
+        }
         window.OCTAVE.isPlaying ? YTP.pauseVideo() : YTP.playVideo();
     } else {
         window.OCTAVE.isPlaying ? AUDIO.pause() : AUDIO.play().catch(() => {});
@@ -441,7 +470,6 @@ function formatTime(seconds) {
 
 function updateMediaSession(track) {
     if (!('mediaSession' in navigator)) return;
-    // FIX: Use getSafeThumb to generate thumb from videoId if thumb is missing
     const thumb = window.getSafeThumb(track);
 
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -748,7 +776,6 @@ function updatePlayerUI(track) {
         fL: document.getElementById('fp-like')
     };
 
-    // FIX: Use getSafeThumb to generate YouTube thumbnail from videoId when thumb is missing
     const thumb = window.getSafeThumb(track);
 
     if (els.mT) els.mT.textContent = track.title;
@@ -850,13 +877,17 @@ function initPlayerDOM() {
             }
         }
 
+        // FIX: Add close-fp handler here as redundancy in case app.js misses it
+        document.getElementById('close-fp')?.addEventListener('click', () => {
+            document.getElementById('full-player')?.classList.remove('active');
+        });
+
         document.querySelector('.mini-player')?.addEventListener('click', (e) => {
             const rect = document.querySelector('.mini-player').getBoundingClientRect();
             if (e.clientY - rect.top <= 10) {
                 e.stopPropagation();
                 seekToPosition(e, document.querySelector('.mini-player'), true);
             } else {
-                // FIX: Open the full player overlay when tapping the mini-player body
                 document.getElementById('full-player')?.classList.add('active');
                 if(window.OCTAVE.currentIndex >= 0 && !window.OCTAVE.activeTrackViewed) {
                     const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
