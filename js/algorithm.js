@@ -16,16 +16,16 @@ if (!window.escapeHTML) {
 window.calculateTrackScore = (track) => {
     if (!track || !track.videoId) return -100;
     const stats = window.OCTAVE.playStats[track.videoId] || { plays: 0, skips: 0, completes: 0, manual: 0, activeViews: 0 };
-    
+
     let score = 0;
     score += (stats.plays * 1);
     score += (stats.completes * 3);  
     score += (stats.manual * 5);     
     score += (stats.activeViews * 1);
     score -= (stats.skips * 10); 
-    
+
     if (window.OCTAVE.liked && window.OCTAVE.liked[track.videoId]) score += 20;
-    
+
     let inPlaylist = false;
     if (window.OCTAVE.playlists) {
         Object.values(window.OCTAVE.playlists).forEach(pl => {
@@ -33,7 +33,7 @@ window.calculateTrackScore = (track) => {
         });
     }
     if (inPlaylist) score += 5;
-    
+
     return score;
 };
 
@@ -46,12 +46,12 @@ window.fetchAutoDjBatch = async () => {
     try {
         const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || []), ...(window.OCTAVE.queue ||[])];
         const uniqueKnown = Array.from(new Map(allKnown.map(t =>[t.videoId, t])).values());
-        
+
         let topSeeds = uniqueKnown
             .filter(t => !window.OCTAVE.sessionHistory.includes(t.videoId))
             .sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a))
             .slice(0, 3);
-            
+
         if (topSeeds.length === 0 && window.OCTAVE.recentPlayed.length > 0) {
             topSeeds.push(window.OCTAVE.recentPlayed[0]);
         }
@@ -116,13 +116,13 @@ window.fetchAutoDjBatch = async () => {
             'tiktok', 'meme', 'reaction', 'gameplay', 'how to', 'bts', 'behind the scenes', 
             'teaser', 'trailer', 'audiobook', 'karaoke', 'prank', 'funny', 'compilation'
         ];
-        
+
         const freshRecs = candidatePool.filter(v => {
             // STRICT TIME BOUNDS: Must be between 2 mins (120s) and 7 mins (420s). Eliminates loops, shorts, and full albums.
             const isMusicLength = v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420; 
             const notPlayedThisSession = !window.OCTAVE.sessionHistory.includes(v.videoId);
             const notPenalized = window.calculateTrackScore({ videoId: v.videoId }) >= -5; 
-            
+
             const titleLower = (v.title || '').toLowerCase();
             const authorLower = (v.author || '').toLowerCase();
             const noBadWords = !badWords.some(bw => titleLower.includes(bw) || authorLower.includes(bw));
@@ -133,7 +133,7 @@ window.fetchAutoDjBatch = async () => {
 
         const uniqueRecs = Array.from(new Map(freshRecs.map(t =>[t.videoId, t])).values());
         uniqueRecs.sort(() => 0.5 - Math.random());
-        
+
         const next5 = uniqueRecs.slice(0, 5).map(pick => ({
             videoId: pick.videoId, 
             title: pick.title, 
@@ -145,7 +145,7 @@ window.fetchAutoDjBatch = async () => {
             window.OCTAVE.queue.push(...next5);
             window.saveCache();
         }
-        
+
     } catch (e) {
         console.warn("Octave: Silent Auto-DJ batch fetch skipped.");
     } finally {
@@ -153,6 +153,9 @@ window.fetchAutoDjBatch = async () => {
     }
 };
 
+// FIX: Don't overwrite playNextLogic from player.js.
+// The player.js version handles auto-advance properly with the generateDiscoverMix fallback.
+// We only need the playTrackByIndex wrapper for prefetching.
 setTimeout(() => {
     if (window.playTrackByIndex) {
         const originalPlayTrackByIndex = window.playTrackByIndex;
@@ -167,25 +170,10 @@ setTimeout(() => {
     }
 }, 500); 
 
-window.playNextLogic = async () => {
-    if (window.OCTAVE.isTransitioning) return;
-    
-    if (window.OCTAVE.currentIndex >= window.OCTAVE.queue.length - 1) {
-        const fpPlay = document.querySelector('#fp-play i');
-        if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin'; 
-        await window.fetchAutoDjBatch();
-    }
-
-    if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-        window.OCTAVE.isNextTrackManual = false; 
-        window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-    } else {
-        window.OCTAVE.isPlaying = false;
-        const fpPlay = document.querySelector('#fp-play i');
-        if (fpPlay) fpPlay.className = 'fa-solid fa-play';
-    }
-};
-window.playNext = window.playNextLogic; 
+// REMOVED: algorithm.js was overwriting player.js's playNextLogic here.
+// The player.js version is the source of truth for auto-advance behavior.
+// window.playNextLogic = async () => { ... }  // DELETED
+// window.playNext = window.playNextLogic;       // DELETED
 
 window.generateDiscoverMix = async () => {
     const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
@@ -195,7 +183,7 @@ window.generateDiscoverMix = async () => {
     }
 
     const dynamicView = document.getElementById('dynamic-view');
-    
+
     dynamicView.innerHTML = `
         <div style="padding: 20px;">
             <button class="icon-btn" onclick="document.querySelector('.nav-item.active').click()"><i class="fa-solid fa-arrow-left"></i></button>
@@ -212,7 +200,7 @@ window.generateDiscoverMix = async () => {
 
     window.OCTAVE.queue =[];
     window.OCTAVE.currentIndex = -1;
-    
+
     await window.fetchAutoDjBatch(); 
 
     if (window.OCTAVE.queue.length > 0) {
@@ -233,15 +221,15 @@ window.fetchDailyRecommendations = async () => {
     if (!window.OCTAVE) return;
     const now = Date.now();
     const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
-    
+
     if (window.OCTAVE.dailyRecs && window.OCTAVE.dailyRecs.tracks && window.OCTAVE.dailyRecs.tracks.length > 0) {
         const usesBadThumbs = window.OCTAVE.dailyRecs.tracks.some(t => t.thumb && !t.thumb.includes('ytimg.com'));
         if (!usesBadThumbs && (now - window.OCTAVE.dailyRecs.timestamp < FIVE_DAYS)) return; 
     }
-    
+
     const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
     const topScored = allKnown.sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a)).slice(0, 10);
-    
+
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
         const controller = new AbortController();
@@ -312,13 +300,13 @@ window.fetchTrendingMusic = async () => {
                     const title = entry['im:name'].label;
                     const author = entry['im:artist'].label;
                     const key = `${title}-${author}`.toLowerCase(); 
-                    
+
                     if (!uniqueTracks.has(key)) {
                         let thumbUrl = '';
                         if (entry['im:image'] && entry['im:image'].length > 0) {
                             thumbUrl = entry['im:image'][entry['im:image'].length - 1].label;
                         }
-                        
+
                         uniqueTracks.set(key, {
                             videoId: null, 
                             title: title,
@@ -351,14 +339,14 @@ window.renderTrendingTracks = (tracks, container) => {
         const el = document.createElement('div');
         el.className = 'square-card';
         el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${track.thumb}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
-        
+
         el.addEventListener('click', async () => {
             if (!track.videoId) {
                 el.style.opacity = '0.5'; 
                 const query = `${track.author} ${track.title} audio`;
                 const results = await window.performSearch(query);
                 el.style.opacity = '1';
-                
+
                 if (results && results.length > 0) {
                     track.videoId = results[0].videoId;
                     window.saveCache(); 
@@ -370,7 +358,7 @@ window.renderTrendingTracks = (tracks, container) => {
                 window.playTrack(track);
             }
         });
-        
+
         container.appendChild(el);
     });
 };
