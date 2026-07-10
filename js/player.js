@@ -10,6 +10,15 @@ window.escapeHTML = (str) => {
     return div.innerHTML;
 };
 
+// FIX: Ensure getSafeThumb is available even before app.js loads
+if (!window.getSafeThumb) {
+    window.getSafeThumb = (track) => {
+        if (!track) return '';
+        if (track.videoId) return `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
+        return track.thumb || '';
+    };
+}
+
 window.OCTAVE = {
     queue:[],
     currentIndex: -1,
@@ -80,7 +89,7 @@ function loadCache() {
         window.OCTAVE.playlists = parsed.playlists || {};
         window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
         window.OCTAVE.recentSearches = parsed.recentSearches ||[];
-        
+
         window.OCTAVE.playStats = parsed.playStats || {};
         Object.keys(window.OCTAVE.playStats).forEach(key => {
             if (typeof window.OCTAVE.playStats[key] === 'number') {
@@ -150,9 +159,9 @@ let audioUnlocked = false;
 function unlockAudioEngine() {
     if (audioUnlocked) return;
     audioUnlocked = true;
-    
+
     AUDIO.play().then(() => { AUDIO.pause(); }).catch(() => {});
-    
+
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const buf = ctx.createBuffer(1, 1, 22050);
@@ -208,13 +217,13 @@ function preloadNextTrackInQueue() {
 
 const tryNextStream = (videoId) => {
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
-    
+
     if (preloadedVideoId === videoId && PRELOAD_AUDIO.src) {
         AUDIO.src = PRELOAD_AUDIO.src;
     } else {
         AUDIO.src = getStreamUrl(videoId);
     }
-    
+
     AUDIO.load();
     AUDIO.play().catch(() => {
         updatePlayIcons('fa-solid fa-play');
@@ -252,7 +261,7 @@ AUDIO.addEventListener('error', async () => {
     if (activeEngine !== 'native') return;
     if (!window.OCTAVE.currentTrackErrorRetries) window.OCTAVE.currentTrackErrorRetries = 0;
     window.OCTAVE.currentTrackErrorRetries++;
-    
+
     // If we've exhausted all instances, try the API direct-url nuclear option
     if (window.OCTAVE.currentTrackErrorRetries >= window.INVIDIOUS.length) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
@@ -274,7 +283,7 @@ AUDIO.addEventListener('error', async () => {
         updatePlayIcons('fa-solid fa-play');
         return;
     }
-    
+
     window.invIdx = (window.invIdx + 1) % window.INVIDIOUS.length;
     if (window.OCTAVE.currentIndex >= 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
@@ -358,7 +367,7 @@ function handleTrackEnded() {
 
 window.playNextLogic = () => {
     if (window.OCTAVE.isTransitioning) return; 
-    
+
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else if (window.generateDiscoverMix) {
@@ -379,7 +388,7 @@ function updatePlayIcons(iconClass) {
 
 window.togglePlay = () => {
     if (window.OCTAVE.currentIndex === -1) return;
-    
+
     if (activeEngine === 'iframe') {
         if (!YTP) return;
         window.OCTAVE.isPlaying ? YTP.pauseVideo() : YTP.playVideo();
@@ -392,7 +401,7 @@ function startProgressTracking() {
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
         if (!window.OCTAVE.isPlaying || window.OCTAVE.isDraggingProgress) return;
-        
+
         let current = 0;
         let total = 0;
 
@@ -432,18 +441,20 @@ function formatTime(seconds) {
 
 function updateMediaSession(track) {
     if (!('mediaSession' in navigator)) return;
+    // FIX: Use getSafeThumb to generate thumb from videoId if thumb is missing
+    const thumb = window.getSafeThumb(track);
 
     navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title,
         artist: track.author,
-        artwork:[
-            { src: track.thumb, sizes: '96x96', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '128x128', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '192x192', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '256x256', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '384x384', type: 'image/jpeg' },
-            { src: track.thumb, sizes: '512x512', type: 'image/jpeg' }
-        ]
+        artwork: thumb ? [
+            { src: thumb, sizes: '96x96', type: 'image/jpeg' },
+            { src: thumb, sizes: '128x128', type: 'image/jpeg' },
+            { src: thumb, sizes: '192x192', type: 'image/jpeg' },
+            { src: thumb, sizes: '256x256', type: 'image/jpeg' },
+            { src: thumb, sizes: '384x384', type: 'image/jpeg' },
+            { src: thumb, sizes: '512x512', type: 'image/jpeg' }
+        ] : []
     });
 
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
@@ -489,7 +500,7 @@ function syncMediaSessionPosition() {
 
 window.playTrackByIndex = (index) => {
     if (window.OCTAVE.isTransitioning) return; 
-    
+
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     const track = window.OCTAVE.queue[index];
 
@@ -507,7 +518,7 @@ window.playTrackByIndex = (index) => {
     } catch (e) {}
 
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
-    
+
     const miniProg = document.getElementById('mini-progress');
     const fpProg = document.getElementById('fp-progress-fill');
     const currTime = document.getElementById('fp-time-current');
@@ -516,7 +527,7 @@ window.playTrackByIndex = (index) => {
     if (fpProg) fpProg.style.width = '0%';
     if (currTime) currTime.textContent = "0:00";
     if (totTime) totTime.textContent = "0:00";
-    
+
     const hour = new Date().getHours();
     let tod = 'night';
     if (hour >= 5 && hour < 12) tod = 'morning';
@@ -525,7 +536,7 @@ window.playTrackByIndex = (index) => {
     window.initTrackStats(track.videoId);
     window.OCTAVE.playStats[track.videoId].plays++;
     window.OCTAVE.playStats[track.videoId].lastPlayedTimeOfDay = tod;
-    
+
     if (window.OCTAVE.isNextTrackManual) {
         window.OCTAVE.playStats[track.videoId].manual++;
     }
@@ -537,7 +548,7 @@ window.playTrackByIndex = (index) => {
     if (!window.OCTAVE.sessionHistory.includes(track.videoId)) {
         window.OCTAVE.sessionHistory.push(track.videoId);
     }
-    
+
     window.OCTAVE.recentPlayed =[track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
     window.saveCache();
 
@@ -582,7 +593,7 @@ window.playTrack = (track) => {
 
 window.playPrev = () => {
     if (window.OCTAVE.isTransitioning) return; 
-    
+
     let current = 0;
     if (activeEngine === 'iframe' && YTP && typeof YTP.getCurrentTime === 'function') {
         current = YTP.getCurrentTime();
@@ -651,12 +662,12 @@ window.applyLiquidShadow = (imageSrc) => {
         canvas.height = img.height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0);
-        
+
         try {
             const w = img.width;
             const h = img.height;
             const sampleSize = 5;
-            
+
             const points = [
                 { x: Math.floor(w / 2), y: Math.floor(h / 2) },           
                 { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },        
@@ -669,9 +680,9 @@ window.applyLiquidShadow = (imageSrc) => {
             points.forEach(pt => {
                 const startX = Math.max(0, Math.min(pt.x - 2, w - sampleSize));
                 const startY = Math.max(0, Math.min(pt.y - 2, h - sampleSize));
-                
+
                 const imageData = ctx.getImageData(startX, startY, sampleSize, sampleSize).data;
-                
+
                 for(let i=0; i < imageData.length; i+=4) {
                     if(imageData[i] > 15 || imageData[i+1] > 15 || imageData[i+2] > 15) {
                         r += imageData[i];
@@ -681,7 +692,7 @@ window.applyLiquidShadow = (imageSrc) => {
                     }
                 }
             });
-            
+
             if(count === 0) {
                 const fallback = ctx.getImageData(Math.floor(w/2), Math.floor(h/2), 1, 1).data;
                 r = fallback[0]; g = fallback[1]; b = fallback[2];
@@ -693,7 +704,7 @@ window.applyLiquidShadow = (imageSrc) => {
             r = r + (r - gray) * 0.4; 
             g = g + (g - gray) * 0.4;
             b = b + (b - gray) * 0.4;
-            
+
             r = Math.min(255, Math.max(0, Math.floor(r * 1.2)));
             g = Math.min(255, Math.max(0, Math.floor(g * 1.2)));
             b = Math.min(255, Math.max(0, Math.floor(b * 1.2)));
@@ -737,20 +748,25 @@ function updatePlayerUI(track) {
         fL: document.getElementById('fp-like')
     };
 
+    // FIX: Use getSafeThumb to generate YouTube thumbnail from videoId when thumb is missing
+    const thumb = window.getSafeThumb(track);
+
     if (els.mT) els.mT.textContent = track.title;
     if (els.mA) els.mA.textContent = track.author;
     if (els.mArt) {
-        els.mArt.style.backgroundImage = `url(${track.thumb})`;
+        els.mArt.style.backgroundImage = thumb ? `url(${thumb})` : 'none';
         els.mArt.style.backgroundSize = 'cover';
+        els.mArt.style.backgroundPosition = 'center';
+        els.mArt.style.backgroundRepeat = 'no-repeat';
     }
     if (els.fT) els.fT.textContent = track.title;
     if (els.fA) els.fA.innerHTML = `${window.escapeHTML(track.author)} <i class="fa-solid fa-chevron-right" style="font-size: 10px; margin-left: 4px;"></i>`;
     if (els.fArt) {
-        els.fArt.src = track.thumb;
+        els.fArt.src = thumb;
         els.fArt.style.display = 'block';
     }
 
-    window.applyLiquidShadow(track.thumb);
+    window.applyLiquidShadow(thumb);
 
     const isLiked = !!window.OCTAVE.liked[track.videoId];
     const likeHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
@@ -779,7 +795,7 @@ window.toggleLike = (track) => {
 function seekToPosition(e, containerElement, isFinalSeek = true) {
     if (window.OCTAVE.currentIndex === -1 || !containerElement) return;
     const rect = containerElement.getBoundingClientRect();
-    
+
     let clientX = 0;
     if (e.touches && e.touches.length > 0) {
         clientX = e.touches[0].clientX;
@@ -788,9 +804,9 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     } else {
         clientX = e.clientX;
     }
-    
+
     const percentage = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    
+
     let totalTime = 0;
     if (activeEngine === 'iframe' && YTP && typeof YTP.getDuration === 'function') {
         totalTime = YTP.getDuration();
@@ -802,7 +818,7 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
         const fpFill = document.getElementById('fp-progress-fill');
         const miniFill = document.getElementById('mini-progress');
         const currTime = document.getElementById('fp-time-current');
-        
+
         if (containerElement.id === 'fp-progress-container' && fpFill) fpFill.style.width = `${percentage * 100}%`;
         if (containerElement.classList.contains('mini-player') && miniFill) miniFill.style.width = `${percentage * 100}%`;
         if (currTime) currTime.textContent = formatTime(totalTime * percentage);
@@ -840,6 +856,8 @@ function initPlayerDOM() {
                 e.stopPropagation();
                 seekToPosition(e, document.querySelector('.mini-player'), true);
             } else {
+                // FIX: Open the full player overlay when tapping the mini-player body
+                document.getElementById('full-player')?.classList.add('active');
                 if(window.OCTAVE.currentIndex >= 0 && !window.OCTAVE.activeTrackViewed) {
                     const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
                     window.initTrackStats(id);
@@ -854,12 +872,12 @@ function initPlayerDOM() {
             e.stopPropagation();
             window.togglePlay();
         });
-        
+
         document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
-        
+
         document.getElementById('fp-next')?.addEventListener('click', () => {
             if (window.OCTAVE.isTransitioning) return; 
-            
+
             if (window.OCTAVE.currentIndex >= 0) {
                 const timeListened = Date.now() - window.OCTAVE.trackStartTime;
                 if (timeListened < 15000) { 
@@ -872,18 +890,18 @@ function initPlayerDOM() {
             window.OCTAVE.isNextTrackManual = true;
             if (window.playNextLogic) window.playNextLogic();
         });
-        
+
         document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
-        
+
         document.getElementById('mini-like-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
             if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
         });
-        
+
         document.getElementById('fp-like')?.addEventListener('click', () => {
             if (window.OCTAVE.currentIndex >= 0) window.toggleLike(window.OCTAVE.queue[window.OCTAVE.currentIndex]);
         });
-        
+
         const fpProgContainer = document.getElementById('fp-progress-container');
         if (fpProgContainer) {
             const handleScrubStart = (e) => {
@@ -904,7 +922,7 @@ function initPlayerDOM() {
             fpProgContainer.addEventListener('mousedown', handleScrubStart);
             document.addEventListener('mousemove', handleScrubMove, { passive: false });
             document.addEventListener('mouseup', handleScrubEnd);
-            
+
             fpProgContainer.addEventListener('touchstart', handleScrubStart, { passive: true });
             document.addEventListener('touchmove', handleScrubMove, { passive: false });
             document.addEventListener('touchend', handleScrubEnd);
