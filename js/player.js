@@ -128,7 +128,11 @@ window.INVIDIOUS =[
     'https://invidious.asir.dev',
     'https://invidious.projectsegfau.lt',
     'https://inv.nadeko.net',
-    'https://invidious.privacyredirect.com'
+    'https://invidious.privacyredirect.com',
+    'https://invidious.baczek.me',
+    'https://invidious.esmailelbob.xyz',
+    'https://yewtu.be',
+    'https://invidious.flokinet.to'
 ];
 
 window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
