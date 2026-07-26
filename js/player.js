@@ -4,7 +4,8 @@
 
 // ============================================================
 // player.js Octave Adaptive Audio Engine
-// Step 1 Fix: Piped Stream Fetch + iFrame Fallback Guard
+// Step 1: Silent Audio Keepalive
+// Step 2: Enhanced Visibility & Pause Guard (Chrome Background Fix)
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -273,7 +274,6 @@ const tryNextStream = async (videoId) => {
         streamUrl = await fetchPipedAudioStreamUrl(videoId);
     }
 
-    // Fall back to iframe if Piped API returns null
     if (!streamUrl) {
         console.warn("Octave: Piped stream unresolvable. Falling back to iFrame.");
         activeEngine = 'iframe';
@@ -308,9 +308,13 @@ AUDIO.addEventListener('playing', () => {
     syncMediaSessionPosition();
 });
 
+// ============================================================
+// STEP 2: ENHANCED PAUSE GUARD & VISIBILITY LISTENERS
+// ============================================================
 AUDIO.addEventListener('pause', () => {
     if (activeEngine !== 'native') return;
 
+    // Reject auto-pause triggers from Android/Chrome when minimized
     if (document.hidden && window.OCTAVE.isPlaying) {
         AUDIO.play().catch(() => {});
         resumeKeepalive();
@@ -327,6 +331,25 @@ AUDIO.addEventListener('pause', () => {
         updatePlayIcons('fa-solid fa-play');
     }
     clearInterval(progressTimer);
+});
+
+// Step 2: Handle background/foreground visibility changes explicitly
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        resumeKeepalive();
+        if (activeEngine === 'native' && window.OCTAVE.isPlaying && AUDIO.paused) {
+            AUDIO.play().catch(() => {});
+        }
+        if ('mediaSession' in navigator && window.OCTAVE.isPlaying) {
+            navigator.mediaSession.playbackState = 'playing';
+        }
+    } else {
+        resumeKeepalive();
+        if (activeEngine === 'native' && window.OCTAVE.isPlaying && AUDIO.paused && AUDIO.src) {
+            AUDIO.play().catch(() => {});
+        }
+        syncMediaSessionPosition();
+    }
 });
 
 AUDIO.addEventListener('ended', () => {
