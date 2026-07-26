@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Adaptive Audio Engine
-// Step 1: Silent Audio Keepalive Engine Integrated
+// Step 1 Fix: Piped Stream Fetch + iFrame Fallback Guard
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -54,7 +54,7 @@ if (isBrave) {
     console.log("Octave: Brave detected -> iFrame Engine locked.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome/Standard Browser -> Piped API Native Engine enabled.");
+    console.log("Octave: Chrome/Standard Browser -> Native Engine with iFrame Fallback enabled.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
@@ -72,7 +72,6 @@ function startSilentKeepalive() {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         keepAliveCtx = new AudioContext();
         
-        // Single-sample silent buffer — marks tab as active media source to Chrome OS scheduler
         const buffer = keepAliveCtx.createBuffer(1, 1, 22050);
         keepAliveNode = keepAliveCtx.createBufferSource();
         keepAliveNode.buffer = buffer;
@@ -240,7 +239,6 @@ function unlockAudioEngine() {
     if (audioUnlocked) return;
     audioUnlocked = true;
 
-    // Start Step 1 Silent Keepalive on user interaction
     startSilentKeepalive();
 
     const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
@@ -275,24 +273,23 @@ const tryNextStream = async (videoId) => {
         streamUrl = await fetchPipedAudioStreamUrl(videoId);
     }
 
+    // Fall back to iframe if Piped API returns null
     if (!streamUrl) {
-        console.error("Octave: Failed to fetch Piped stream across all instances.");
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
+        console.warn("Octave: Piped stream unresolvable. Falling back to iFrame.");
+        activeEngine = 'iframe';
+        playViaIframe(videoId);
         return;
     }
 
     AUDIO.src = streamUrl;
     AUDIO.load();
 
-    // Ensure keepalive context stays active prior to play
     resumeKeepalive();
 
     AUDIO.play().catch(() => {
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
+        console.warn("Octave: Native playback blocked. Falling back to iFrame.");
+        activeEngine = 'iframe';
+        playViaIframe(videoId);
     });
 };
 
@@ -344,15 +341,14 @@ AUDIO.addEventListener('error', async () => {
         return;
     }
 
-    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED_INSTANCES.length;
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-    
     if (track && track.videoId) {
-        tryNextStream(track.videoId);
+        activeEngine = 'iframe';
+        playViaIframe(track.videoId);
     }
 });
 
-// --- YOUTUBE IFRAME ENGINE (FOR BRAVE) ---
+// --- YOUTUBE IFRAME ENGINE (FOR BRAVE & FALLBACK) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
