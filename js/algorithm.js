@@ -44,8 +44,8 @@ window.fetchAutoDjBatch = async () => {
     window.isFetchingBatch = true;
 
     try {
-        const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || []), ...(window.OCTAVE.queue ||[])];
-        const uniqueKnown = Array.from(new Map(allKnown.map(t =>[t.videoId, t])).values());
+        const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || []), ...(window.OCTAVE.queue || [])];
+        const uniqueKnown = Array.from(new Map(allKnown.map(t => [t.videoId, t])).values());
 
         let topSeeds = uniqueKnown
             .filter(t => !window.OCTAVE.sessionHistory.includes(t.videoId))
@@ -118,7 +118,7 @@ window.fetchAutoDjBatch = async () => {
         ];
 
         const freshRecs = candidatePool.filter(v => {
-            // STRICT TIME BOUNDS: Must be between 2 mins (120s) and 7 mins (420s). Eliminates loops, shorts, and full albums.
+            // STRICT TIME BOUNDS: Must be between 2 mins (120s) and 7 mins (420s)
             const isMusicLength = v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420; 
             const notPlayedThisSession = !window.OCTAVE.sessionHistory.includes(v.videoId);
             const notPenalized = window.calculateTrackScore({ videoId: v.videoId }) >= -5; 
@@ -131,7 +131,7 @@ window.fetchAutoDjBatch = async () => {
             return isMusicLength && notPlayedThisSession && notPenalized && noBadWords && notInQueue;
         });
 
-        const uniqueRecs = Array.from(new Map(freshRecs.map(t =>[t.videoId, t])).values());
+        const uniqueRecs = Array.from(new Map(freshRecs.map(t => [t.videoId, t])).values());
         uniqueRecs.sort(() => 0.5 - Math.random());
 
         const next5 = uniqueRecs.slice(0, 5).map(pick => ({
@@ -153,30 +153,28 @@ window.fetchAutoDjBatch = async () => {
     }
 };
 
-// FIX: Don't overwrite playNextLogic from player.js.
-// The player.js version handles auto-advance properly with the generateDiscoverMix fallback.
-// We only need the playTrackByIndex wrapper for prefetching.
+// FIX: Corrected typo fetchAutoDJBatch → fetchAutoDjBatch (matches the actual function name above)
+// Also wrapped in a guard so it doesn't overwrite playTrackByIndex before player.js has set it up.
 setTimeout(() => {
     if (window.playTrackByIndex) {
         const originalPlayTrackByIndex = window.playTrackByIndex;
         window.playTrackByIndex = (index) => {
             originalPlayTrackByIndex(index);
+            // Pre-fetch more tracks when queue is running low
             if (window.OCTAVE.queue.length - index <= 2) {
                 setTimeout(() => {
-                    window.fetchAutoDJBatch();
+                    window.fetchAutoDjBatch(); // FIXED: was fetchAutoDJBatch (wrong case)
                 }, 2000);
             }
         };
     }
 }, 500); 
 
-// REMOVED: algorithm.js was overwriting player.js's playNextLogic here.
-// The player.js version is the source of truth for auto-advance behavior.
-// window.playNextLogic = async () => { ... }  // DELETED
-// window.playNext = window.playNextLogic;       // DELETED
+// NOTE: Do NOT redefine playNextLogic here — player.js owns that function.
+// The player.js version calls fetchAutoDjBatch and generateDiscoverMix correctly.
 
 window.generateDiscoverMix = async () => {
-    const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
+    const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
     if (allKnown.length === 0) {
         alert("Play or like some songs first to build your taste profile!");
         return;
@@ -198,7 +196,7 @@ window.generateDiscoverMix = async () => {
     const backupQueue = [...window.OCTAVE.queue];
     const backupIndex = window.OCTAVE.currentIndex;
 
-    window.OCTAVE.queue =[];
+    window.OCTAVE.queue = [];
     window.OCTAVE.currentIndex = -1;
 
     await window.fetchAutoDjBatch(); 
@@ -227,7 +225,7 @@ window.fetchDailyRecommendations = async () => {
         if (!usesBadThumbs && (now - window.OCTAVE.dailyRecs.timestamp < FIVE_DAYS)) return; 
     }
 
-    const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
+    const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
     const topScored = allKnown.sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a)).slice(0, 10);
 
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
@@ -247,7 +245,7 @@ window.fetchDailyRecommendations = async () => {
             clearTimeout(timeoutId);
             if (r.ok) {
                 const d = await r.json();
-                let newTracks =[];
+                let newTracks = [];
 
                 if (topScored.length > 0 && d.recommendedVideos) {
                     newTracks = d.recommendedVideos.filter(v => v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420).slice(0, 10);
