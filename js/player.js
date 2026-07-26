@@ -3,10 +3,9 @@
 // ========================================
 
 // ============================================================
-// player.js Octave Adaptive Audio Engine
-// Step 1: Silent Audio Keepalive
-// Step 2: Enhanced Visibility & Pause Guard
-// Step 3: Aggressive Native Pre-buffering & Strict iFrame Block
+// player.js Octave Adaptive Engine
+// Mobile Chrome Audio Anchor + Auto iFrame Fallback Guard
+// Strict Brave iFrame Engine Lock
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -48,22 +47,23 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
+// Clear stale preference flags
+localStorage.removeItem('octave_engine_pref');
+
 // --- STRICT BROWSER ENGINE SEPARATION ---
 const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
 
 if (isBrave) {
     window.AUDIO_ENGINE = 'iframe';
-    console.log("Octave: Brave detected -> iFrame Engine locked.");
+    console.log("Octave: Brave detected -> Locked 100% to iFrame Engine.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome/Standard Browser -> Native Engine strictly enforced.");
+    console.log("Octave: Mobile Chrome -> Native Engine initialized with iFrame auto-fallback.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
 
-// ============================================================
-// STEP 1: BACKGROUND SILENT KEEPALIVE ENGINE
-// ============================================================
+// --- BACKGROUND SILENT AUDIO ANCHOR ---
 let keepAliveCtx = null;
 let keepAliveNode = null;
 
@@ -79,7 +79,7 @@ function startSilentKeepalive() {
         keepAliveNode.loop = true;
         keepAliveNode.connect(keepAliveCtx.destination);
         keepAliveNode.start(0);
-        console.log("Octave: Silent Keepalive started.");
+        console.log("Octave: Background silent audio anchor activated.");
     } catch (e) {
         console.warn("Octave: Keepalive initialization error", e);
     }
@@ -91,7 +91,7 @@ function resumeKeepalive() {
     }
 }
 
-// --- PIPED INSTANCES (FOR CHROME NATIVE STREAMING) ---
+// --- PUBLIC PIPED INSTANCES ---
 window.PIPED_INSTANCES = [
     'https://pipedapi.kavin.rocks',
     'https://api.piped.private.coffee',
@@ -108,7 +108,7 @@ async function fetchPipedAudioStreamUrl(videoId) {
         const base = window.PIPED_INSTANCES[(window.pipedIdx + i) % window.PIPED_INSTANCES.length];
         try {
             const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 6000);
+            const id = setTimeout(() => controller.abort(), 5000);
             const r = await fetch(`${base}/streams/${videoId}`, { signal: controller.signal });
             clearTimeout(id);
             if (r.ok) {
@@ -226,9 +226,11 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// --- NATIVE AUDIO PLAYER CONFIGURATION (CHROME) ---
+// --- NATIVE AUDIO PLAYER CONFIGURATION ---
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
+
+const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
 
 const PRELOAD_AUDIO = new Audio(); 
 PRELOAD_AUDIO.preload = 'auto';
@@ -242,14 +244,12 @@ function unlockAudioEngine() {
 
     startSilentKeepalive();
 
-    const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
     AUDIO.src = SILENT_MP3;
     AUDIO.play().then(() => { AUDIO.pause(); }).catch(() => {});
 }
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
-// STEP 3: Early Pre-buffering (30 seconds remaining or 70% progress)
 async function preloadNextTrackInQueue() {
     if (activeEngine !== 'native' || window.OCTAVE.currentIndex < 0) return;
     const nextIdx = window.OCTAVE.currentIndex + 1;
@@ -277,23 +277,22 @@ const tryNextStream = async (videoId) => {
         streamUrl = await fetchPipedAudioStreamUrl(videoId);
     }
 
+    // Auto-fallback to iFrame if Piped stream URL is missing or IP-blocked
     if (!streamUrl) {
-        console.warn("Octave: Stream fetch failed on Chrome native.");
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
+        console.warn("Octave: Native stream unresolvable. Triggering iFrame fallback.");
+        activeEngine = 'iframe';
+        playViaIframe(videoId);
         return;
     }
 
     AUDIO.src = streamUrl;
     AUDIO.load();
-
     resumeKeepalive();
 
     AUDIO.play().catch(() => {
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
+        console.warn("Octave: Native audio play blocked. Triggering iFrame fallback.");
+        activeEngine = 'iframe';
+        playViaIframe(videoId);
     });
 };
 
@@ -312,9 +311,6 @@ AUDIO.addEventListener('playing', () => {
     syncMediaSessionPosition();
 });
 
-// ============================================================
-// STEP 2 & 3: PAUSE GUARD + ACTIVE BACKGROUND RE-PLAY
-// ============================================================
 AUDIO.addEventListener('pause', () => {
     if (activeEngine !== 'native') return;
 
@@ -364,15 +360,15 @@ AUDIO.addEventListener('error', async () => {
         return;
     }
 
-    // Rotate Piped Instance rather than switching to iFrame
-    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED_INSTANCES.length;
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     if (track && track.videoId) {
-        tryNextStream(track.videoId);
+        console.warn("Octave: Native audio error encountered. Switching to iFrame.");
+        activeEngine = 'iframe';
+        playViaIframe(track.videoId);
     }
 });
 
-// --- YOUTUBE IFRAME ENGINE (FOR BRAVE ONLY) ---
+// --- YOUTUBE IFRAME ENGINE (OFFICIAL API) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
@@ -409,6 +405,7 @@ window.onYouTubeIframeAPIReady = () => {
 };
 
 async function playViaIframe(videoId) {
+    updatePlayIcons('fa-solid fa-spinner fa-spin');
     await ytReadyPromise;
     if (YTP && typeof YTP.loadVideoById === 'function') {
         YTP.loadVideoById({ videoId: videoId });
@@ -506,7 +503,6 @@ window.togglePlay = () => {
     }
 };
 
-// STEP 3: Preload at 30 seconds left or 70% progress
 function startProgressTracking() {
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
