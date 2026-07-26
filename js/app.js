@@ -1,3 +1,5 @@
+
+
 // ============================================================
 // app.js — Octave Full Flagship Engine
 // 100% Complete File - Search Multi-Node Bypass + CORS Proxy
@@ -145,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (tab === 'home') {
                 viewDiv.innerHTML = views.home;
-                if(window.renderHome) window.renderHome();
+                if (window.renderHome) setTimeout(() => window.renderHome(), 0);
             } else {
                 viewDiv.innerHTML = views[tab];
                 if (tab === 'search') {
@@ -159,8 +161,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    handleBravePrompt();
-    if(window.renderHome) window.renderHome();
+    if (typeof handleBravePrompt === 'function') handleBravePrompt();
+    if (window.renderHome) setTimeout(() => window.renderHome(), 50);
 
     document.getElementById('close-playlist')?.addEventListener('click', () => document.getElementById('playlist-modal').classList.remove('active'));
     document.getElementById('save-playlist')?.addEventListener('click', () => {
@@ -1212,3 +1214,5 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     btn.innerHTML = 'Import';
     btn.disabled = false;
 });
+
+
