@@ -3,8 +3,8 @@
 // ========================================
 
 // ============================================================
-// player.js Octave Peak Client Audio Engine
-// Promise-Based Queue + Per-Instance Health + Self-Healing Engine
+// player.js Octave Adaptive Audio Engine
+// Strict Brave IFrame Lock + Adaptive Chrome Engine
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -46,7 +46,9 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// --- SELF-HEALING 24-HOUR ENGINE COOLDOWN ---
+// --- STRICT BROWSER ENGINE SEPARATION ---
+const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
+
 const ENGINE_PREF_KEY = 'octave_engine_pref';
 const ENGINE_TIMESTAMP_KEY = 'octave_engine_timestamp';
 const COOLDOWN_24H = 24 * 60 * 60 * 1000;
@@ -55,23 +57,27 @@ function getStoredEnginePreference() {
     const pref = localStorage.getItem(ENGINE_PREF_KEY);
     const ts = parseInt(localStorage.getItem(ENGINE_TIMESTAMP_KEY) || '0', 10);
     
-    // Cooldown expired: reset preference to allow native engine re-evaluation
     if (pref === 'iframe' && ts && (Date.now() - ts > COOLDOWN_24H)) {
         localStorage.removeItem(ENGINE_PREF_KEY);
         localStorage.removeItem(ENGINE_TIMESTAMP_KEY);
-        console.log("Octave: 24h cooldown expired. Resetting engine preference for trial.");
         return 'iframe';
     }
     return pref || 'iframe';
 }
 
-window.AUDIO_ENGINE = getStoredEnginePreference();
+// BRAVE IS LOCKED 100% TO IFRAME ENGINE
+if (isBrave) {
+    window.AUDIO_ENGINE = 'iframe';
+    console.log("Octave: Brave detected -> Locked 100% to iFrame Engine.");
+} else {
+    window.AUDIO_ENGINE = getStoredEnginePreference();
+    console.log(`Octave: Chrome/Standard Browser initialized -> Engine [${window.AUDIO_ENGINE}]`);
+}
+
 let activeEngine = window.AUDIO_ENGINE;
 
 let globalNativeFailures = 0;
 const MAX_NATIVE_STRIKES = 3;
-
-console.log(`Octave: Engine initialized -> [${window.AUDIO_ENGINE}]`);
 
 // --- PER-INSTANCE HEALTH TRACKING ---
 window.INVIDIOUS = [
@@ -90,12 +96,10 @@ window.INVIDIOUS.forEach(inst => {
 
 function getHealthyInstance() {
     const now = Date.now();
-    // Sort instances by fewest failures, prioritizing recently successful ones
     const sorted = [...window.INVIDIOUS].sort((a, b) => {
         const hA = window.instanceHealth[a];
         const hB = window.instanceHealth[b];
         
-        // Recover instances after a 10-minute cooldown
         const failA = (now - hA.lastFailure > 600000) ? 0 : hA.failures;
         const failB = (now - hB.lastFailure > 600000) ? 0 : hB.failures;
         
@@ -233,7 +237,7 @@ window.importVault = (event) => {
 // --- NATIVE AUDIO PLAYER CONFIGURATION ---
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
-AUDIO.crossOrigin = 'anonymous'; // Strict CORS Header configuration
+AUDIO.crossOrigin = 'anonymous';
 
 const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
 
@@ -305,11 +309,13 @@ function preloadNextTrackInQueue() {
 }
 
 function handleNativeFailure() {
+    if (isBrave) return; // Brave never changes engine mode
+
     globalNativeFailures++;
     console.warn(`Octave: Global native audio failure recorded (${globalNativeFailures}/${MAX_NATIVE_STRIKES})`);
     
     if (globalNativeFailures >= MAX_NATIVE_STRIKES) {
-        console.warn("Octave: Strike limit reached. Setting persistent engine preference to iFrame with 24h timer.");
+        console.warn("Octave: Strike limit reached. Setting persistent engine preference to iFrame for non-Brave browsers.");
         localStorage.setItem(ENGINE_PREF_KEY, 'iframe');
         localStorage.setItem(ENGINE_TIMESTAMP_KEY, Date.now().toString());
         window.AUDIO_ENGINE = 'iframe';
@@ -362,11 +368,9 @@ AUDIO.addEventListener('ended', () => {
     handleTrackEnded();
 });
 
-// SMART ERROR CLASSIFICATION
 AUDIO.addEventListener('error', async () => {
     if (activeEngine !== 'native') return;
 
-    // Ignore user-triggered aborts (don't count as strikes)
     if (AUDIO.error && AUDIO.error.code === MediaError.MEDIA_ERR_ABORTED) {
         return;
     }
@@ -376,7 +380,6 @@ AUDIO.addEventListener('error', async () => {
 
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     
-    // Attempt API extraction before logging global engine strike
     if (track && track.videoId) {
         try {
             const directUrl = await window.fetchAudioUrlFromApi(track.videoId);
@@ -388,7 +391,6 @@ AUDIO.addEventListener('error', async () => {
                 return;
             }
         } catch(directErr) {
-            // Immediate handoff to iframe if raw format fails CORS/policy
             activeEngine = 'iframe';
             playViaIframe(track.videoId);
             return;
@@ -453,7 +455,6 @@ window.onYouTubeIframeAPIReady = () => {
     });
 };
 
-// Clean async iframe launcher replacing polling timers
 async function playViaIframe(videoId) {
     await ytReadyPromise;
     if (YTP && typeof YTP.loadVideoById === 'function') {
