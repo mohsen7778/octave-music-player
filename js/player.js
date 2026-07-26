@@ -47,18 +47,17 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// Better detection: Brave hides its identity now, so we also default IFrame for mobile
-// because mobile browsers aggressively kill background Audio elements.
-const isBrave = (navigator.brave && navigator.brave.isBrave) || /Brave/.test(navigator.userAgent);
-const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+// Strict Brave vs Chrome Detection
+const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
 
-window.AUDIO_ENGINE = (isBrave || isMobile) ? 'iframe' : 'native';
+// Brave retains iframe engine; Chrome & other mobile browsers use native audio engine for background play
+window.AUDIO_ENGINE = isBrave ? 'iframe' : 'native';
 let activeEngine = window.AUDIO_ENGINE;
 
 if (window.AUDIO_ENGINE === 'iframe') {
-    console.log("Octave: IFrame Engine selected (background-playback safe)");
+    console.log("Octave: Brave detected -> IFrame Engine selected");
 } else {
-    console.log("Octave: Native Engine selected");
+    console.log("Octave: Native Audio Engine selected for unkilled background play on Chrome");
 }
 
 window.initTrackStats = (videoId) => {
@@ -86,7 +85,6 @@ window.saveCache = () => {
         }));
     } catch(e) {
         console.warn('Octave: saveCache failed (storage full?)', e);
-        // If storage is full, try saving just the critical data
         try {
             localStorage.setItem('octave_data', JSON.stringify({
                 liked: window.OCTAVE.liked,
@@ -126,7 +124,6 @@ function loadCache() {
             window.OCTAVE.queue = parsed.queue || [];
             window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
 
-            // Safety: if restored index is out of bounds, clamp it
             if (window.OCTAVE.currentIndex >= window.OCTAVE.queue.length) {
                 window.OCTAVE.currentIndex = window.OCTAVE.queue.length - 1;
             }
@@ -143,20 +140,15 @@ function loadCache() {
 }
 loadCache();
 
-// ── PERSISTENCE SAFETY NET ──────────────────────────────────────────────────
-// Save on page unload so refresh/tab-close never loses the current session.
 window.addEventListener('beforeunload', () => {
     window.saveCache();
 });
 
-// Also save every 30 seconds as belt-and-suspenders
-// (covers cases where beforeunload doesn't fire on mobile)
 setInterval(() => {
     if (window.OCTAVE.isPlaying || window.OCTAVE.recentPlayed.length > 0) {
         window.saveCache();
     }
 }, 30000);
-// ───────────────────────────────────────────────────────────────────────────
 
 window.exportVault = () => {
     const data = localStorage.getItem('octave_data') || "{}";
@@ -188,7 +180,6 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// UPDATED: Working Invidious instances
 window.INVIDIOUS = [
     'https://inv.nadeko.net',
     'https://invidious.nerdvpn.de',
@@ -411,16 +402,13 @@ function handleTrackEnded() {
     if (window.playNextLogic) window.playNextLogic();
 }
 
-// Robust playNextLogic that handles queue end properly
 window.playNextLogic = () => {
     if (window.OCTAVE.isTransitioning) return; 
 
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-        // There are more tracks in the queue - play the next one
         window.OCTAVE.isNextTrackManual = false;
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else {
-        // We're at the end of the queue - fetch more tracks silently
         window.OCTAVE.isTransitioning = true;
         const fpPlay = document.querySelector('#fp-play i');
         if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin';
@@ -617,7 +605,6 @@ window.playTrackByIndex = (index) => {
         window.OCTAVE.sessionHistory.push(track.videoId);
     }
 
-    // Keep recentPlayed trimmed to 50
     window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)].slice(0, 50);
     window.saveCache();
 
