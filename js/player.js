@@ -43,131 +43,71 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// ============================================================
-// FIXED CACHE SYSTEM — Two-tier with quota protection
-// ============================================================
-const CACHE_KEY = 'octave_data';
-const HEAVY_CACHE_KEY = 'octave_heavy_data';
-const CACHE_VERSION = 2;
+// Better detection: Brave hides its identity now, so we also default IFrame for mobile
+// because mobile browsers aggressively kill background Audio elements.
+const isBrave = (navigator.brave && navigator.brave.isBrave) || /Brave/.test(navigator.userAgent);
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+window.AUDIO_ENGINE = (isBrave || isMobile) ? 'iframe' : 'native';
+let activeEngine = window.AUDIO_ENGINE;
+
+if (window.AUDIO_ENGINE === 'iframe') {
+    console.log("Octave: IFrame Engine selected (background-playback safe)");
+} else {
+    console.log("Octave: Native Engine selected");
+}
+
+window.initTrackStats = (videoId) => {
+    if (!window.OCTAVE.playStats[videoId]) {
+        window.OCTAVE.playStats[videoId] = {
+            plays: 0, skips: 0, completes: 0,
+            manual: 0, activeViews: 0, lastPlayedTimeOfDay: ''
+        };
+    }
+};
 
 window.saveCache = () => {
-    const payload = {
-        _v: CACHE_VERSION,
+    localStorage.setItem('octave_data', JSON.stringify({
         liked: window.OCTAVE.liked,
         playlists: window.OCTAVE.playlists,
-        recentPlayed: (window.OCTAVE.recentPlayed || []).slice(0, 30),
-        recentSearches: (window.OCTAVE.recentSearches || []).slice(0, 30),
-        playStats: window.OCTAVE.playStats,
+        recentPlayed: window.OCTAVE.recentPlayed.slice(0, 30),
+        recentSearches: window.OCTAVE.recentSearches.slice(0, 30),
+        playStats: window.OCTAVE.playStats, 
         queue: window.OCTAVE.queue,
         currentIndex: window.OCTAVE.currentIndex,
         dailyRecs: window.OCTAVE.dailyRecs,
-    };
-
-    try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
-    } catch (e) {
-        if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014) {
-            console.warn('Octave: localStorage quota exceeded. Trimming cache...');
-            // Trim playStats to top 50 tracks
-            const statsEntries = Object.entries(payload.playStats || {});
-            if (statsEntries.length > 50) {
-                payload.playStats = Object.fromEntries(
-                    statsEntries.sort((a, b) => (b[1].plays || 0) - (a[1].plays || 0)).slice(0, 50)
-                );
-            }
-            // Trim dailyRecs
-            if (payload.dailyRecs && payload.dailyRecs.tracks) {
-                payload.dailyRecs.tracks = payload.dailyRecs.tracks.slice(0, 5);
-            }
-            // Trim queue but keep currentIndex valid
-            if (payload.queue && payload.queue.length > 20) {
-                const current = payload.currentIndex >= 0 ? payload.currentIndex : 0;
-                const start = Math.max(0, current - 10);
-                const end = Math.min(payload.queue.length, current + 11);
-                payload.queue = payload.queue.slice(start, end);
-                payload.currentIndex = current - start;
-            }
-            try {
-                localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
-            } catch (e2) {
-                console.error('Octave: Cache save failed even after trimming.', e2);
-            }
-        } else {
-            console.error('Octave: Cache save failed.', e);
-        }
-    }
-
-    // Auto-save heavy data in separate key so it can't corrupt main cache
-    window.saveHeavyCache();
-};
-
-window.saveHeavyCache = () => {
-    try {
-        localStorage.setItem(HEAVY_CACHE_KEY, JSON.stringify({
-            trendingData: window.OCTAVE.trendingData,
-            artistCache: window.OCTAVE.artistCache
-        }));
-    } catch (e) {
-        try { localStorage.removeItem(HEAVY_CACHE_KEY); } catch(e) {}
-    }
+        trendingData: window.OCTAVE.trendingData,
+        artistCache: window.OCTAVE.artistCache
+    }));
 };
 
 function loadCache() {
-    try {
-        const raw = localStorage.getItem(CACHE_KEY);
-        if (!raw) return;
-
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') {
-            localStorage.removeItem(CACHE_KEY);
-            return;
-        }
-
-        // Migrate old format playStats (numbers -> objects)
-        if (!parsed._v && parsed.playStats) {
-            Object.keys(parsed.playStats).forEach(key => {
-                if (typeof parsed.playStats[key] === 'number') {
-                    parsed.playStats[key] = {
-                        plays: parsed.playStats[key],
-                        skips: 0, completes: 0, manual: 0,
-                        activeViews: 0, lastPlayedTimeOfDay: ''
-                    };
-                }
-            });
-        }
-
+    const data = localStorage.getItem('octave_data');
+    if (data) {
+        const parsed = JSON.parse(data);
         window.OCTAVE.liked = parsed.liked || {};
         window.OCTAVE.playlists = parsed.playlists || {};
-        window.OCTAVE.recentPlayed = Array.isArray(parsed.recentPlayed) ? parsed.recentPlayed : [];
-        window.OCTAVE.recentSearches = Array.isArray(parsed.recentSearches) ? parsed.recentSearches : [];
-        window.OCTAVE.playStats = parsed.playStats || {};
-        window.OCTAVE.queue = Array.isArray(parsed.queue) ? parsed.queue : [];
-        
-        const savedIndex = parsed.currentIndex;
-        window.OCTAVE.currentIndex = (typeof savedIndex === 'number' && savedIndex >= -1 && savedIndex < window.OCTAVE.queue.length) 
-            ? savedIndex 
-            : -1;
-        
-        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks: [] };
-    } catch (e) {
-        console.error('Octave: Cache load failed. Starting fresh.', e);
-        try { localStorage.removeItem(CACHE_KEY); } catch(e) {}
-    }
+        window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
+        window.OCTAVE.recentSearches = parsed.recentSearches ||[];
 
-    // Load heavy cache separately (non-critical)
-    try {
-        const heavyRaw = localStorage.getItem(HEAVY_CACHE_KEY);
-        if (heavyRaw) {
-            const heavy = JSON.parse(heavyRaw);
-            if (heavy.trendingData) window.OCTAVE.trendingData = heavy.trendingData;
-            if (heavy.artistCache) window.OCTAVE.artistCache = heavy.artistCache;
-        }
-    } catch (e) {}
+        window.OCTAVE.playStats = parsed.playStats || {};
+        Object.keys(window.OCTAVE.playStats).forEach(key => {
+            if (typeof window.OCTAVE.playStats[key] === 'number') {
+                window.OCTAVE.playStats[key] = { plays: window.OCTAVE.playStats[key], skips: 0, completes: 0, manual: 0, activeViews: 0, lastPlayedTimeOfDay: '' };
+            }
+        });
+
+        window.OCTAVE.queue = parsed.queue ||[];
+        window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
+        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks:[] };
+        window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks:[] };
+        window.OCTAVE.artistCache = parsed.artistCache || {};
+    }
 }
 loadCache();
 
 window.exportVault = () => {
-    const data = localStorage.getItem(CACHE_KEY) || "{}";
+    const data = localStorage.getItem('octave_data') || "{}";
     const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -185,7 +125,7 @@ window.importVault = (event) => {
         try {
             const json = JSON.parse(e.target.result);
             if (json.playlists || json.liked) {
-                localStorage.setItem(CACHE_KEY, e.target.result);
+                localStorage.setItem('octave_data', e.target.result);
                 alert('Data Vault Restored Reloading app');
                 location.reload();
             }
@@ -937,6 +877,7 @@ function initPlayerDOM() {
             }
         }
 
+        // FIX: Add close-fp handler here as redundancy in case app.js misses it
         document.getElementById('close-fp')?.addEventListener('click', () => {
             document.getElementById('full-player')?.classList.remove('active');
         });
