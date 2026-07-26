@@ -5,7 +5,8 @@
 // ============================================================
 // player.js Octave Adaptive Audio Engine
 // Step 1: Silent Audio Keepalive
-// Step 2: Enhanced Visibility & Pause Guard (Chrome Background Fix)
+// Step 2: Enhanced Visibility & Pause Guard
+// Step 3: Aggressive Native Pre-buffering & Strict iFrame Block
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -55,14 +56,13 @@ if (isBrave) {
     console.log("Octave: Brave detected -> iFrame Engine locked.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome/Standard Browser -> Native Engine with iFrame Fallback enabled.");
+    console.log("Octave: Chrome/Standard Browser -> Native Engine strictly enforced.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
 
 // ============================================================
 // STEP 1: BACKGROUND SILENT KEEPALIVE ENGINE
-// Keeps Chrome's audio thread open when tab/app is minimized
 // ============================================================
 let keepAliveCtx = null;
 let keepAliveNode = null;
@@ -249,11 +249,14 @@ function unlockAudioEngine() {
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
+// STEP 3: Early Pre-buffering (30 seconds remaining or 70% progress)
 async function preloadNextTrackInQueue() {
     if (activeEngine !== 'native' || window.OCTAVE.currentIndex < 0) return;
     const nextIdx = window.OCTAVE.currentIndex + 1;
     if (nextIdx < window.OCTAVE.queue.length) {
         const nextId = window.OCTAVE.queue[nextIdx].videoId;
+        if (preloadedVideoId === nextId && preloadedStreamUrl) return;
+
         const streamUrl = await fetchPipedAudioStreamUrl(nextId);
         if (streamUrl) {
             PRELOAD_AUDIO.src = streamUrl;
@@ -275,9 +278,10 @@ const tryNextStream = async (videoId) => {
     }
 
     if (!streamUrl) {
-        console.warn("Octave: Piped stream unresolvable. Falling back to iFrame.");
-        activeEngine = 'iframe';
-        playViaIframe(videoId);
+        console.warn("Octave: Stream fetch failed on Chrome native.");
+        updatePlayIcons('fa-solid fa-play');
+        window.OCTAVE.isPlaying = false;
+        window.OCTAVE.isTransitioning = false;
         return;
     }
 
@@ -287,9 +291,9 @@ const tryNextStream = async (videoId) => {
     resumeKeepalive();
 
     AUDIO.play().catch(() => {
-        console.warn("Octave: Native playback blocked. Falling back to iFrame.");
-        activeEngine = 'iframe';
-        playViaIframe(videoId);
+        updatePlayIcons('fa-solid fa-play');
+        window.OCTAVE.isPlaying = false;
+        window.OCTAVE.isTransitioning = false;
     });
 };
 
@@ -309,12 +313,11 @@ AUDIO.addEventListener('playing', () => {
 });
 
 // ============================================================
-// STEP 2: ENHANCED PAUSE GUARD & VISIBILITY LISTENERS
+// STEP 2 & 3: PAUSE GUARD + ACTIVE BACKGROUND RE-PLAY
 // ============================================================
 AUDIO.addEventListener('pause', () => {
     if (activeEngine !== 'native') return;
 
-    // Reject auto-pause triggers from Android/Chrome when minimized
     if (document.hidden && window.OCTAVE.isPlaying) {
         AUDIO.play().catch(() => {});
         resumeKeepalive();
@@ -333,15 +336,12 @@ AUDIO.addEventListener('pause', () => {
     clearInterval(progressTimer);
 });
 
-// Step 2: Handle background/foreground visibility changes explicitly
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         resumeKeepalive();
-        if (activeEngine === 'native' && window.OCTAVE.isPlaying && AUDIO.paused) {
-            AUDIO.play().catch(() => {});
-        }
-        if ('mediaSession' in navigator && window.OCTAVE.isPlaying) {
-            navigator.mediaSession.playbackState = 'playing';
+        if (activeEngine === 'native' && window.OCTAVE.isPlaying) {
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+            if (AUDIO.paused) AUDIO.play().catch(() => {});
         }
     } else {
         resumeKeepalive();
@@ -364,14 +364,15 @@ AUDIO.addEventListener('error', async () => {
         return;
     }
 
+    // Rotate Piped Instance rather than switching to iFrame
+    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED_INSTANCES.length;
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     if (track && track.videoId) {
-        activeEngine = 'iframe';
-        playViaIframe(track.videoId);
+        tryNextStream(track.videoId);
     }
 });
 
-// --- YOUTUBE IFRAME ENGINE (FOR BRAVE & FALLBACK) ---
+// --- YOUTUBE IFRAME ENGINE (FOR BRAVE ONLY) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
@@ -505,6 +506,7 @@ window.togglePlay = () => {
     }
 };
 
+// STEP 3: Preload at 30 seconds left or 70% progress
 function startProgressTracking() {
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
@@ -532,7 +534,8 @@ function startProgressTracking() {
             if (currTime) currTime.textContent = formatTime(current);
             if (totTime) totTime.textContent = formatTime(total);
 
-            if (current >= 50 && !window.OCTAVE.nextTrackPreloaded) {
+            const secondsLeft = total - current;
+            if ((secondsLeft <= 30 || percent >= 70) && !window.OCTAVE.nextTrackPreloaded) {
                 preloadNextTrackInQueue();
                 window.OCTAVE.nextTrackPreloaded = true;
             }
