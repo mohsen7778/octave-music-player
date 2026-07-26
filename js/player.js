@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Audio Engine
-// Mobile Chrome Unkilled Background Play + MediaSession Lock
+// Clean Native Streams + Mobile Chrome MediaSession Background Lock
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -46,9 +46,10 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// Clear stale iframe override to force Chrome onto native background audio
+// Clear stale iframe preference from previous runs
 localStorage.removeItem('octave_engine_pref');
 
+// STRICT BROWSER SEPARATION
 const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
 
 if (isBrave) {
@@ -56,7 +57,7 @@ if (isBrave) {
     console.log("Octave: Brave detected -> iFrame Engine enabled.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Mobile Chrome detected -> Native Engine forced for background play.");
+    console.log("Octave: Chrome/Standard Mobile -> Native Engine enabled for unkilled background playback.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
@@ -232,7 +233,7 @@ document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
 function getStreamUrl(videoId) {
     const base = getHealthyInstance();
-    return `${base}/latest_version?id=${videoId}&itag=140&local=true&_=${Date.now()}`;
+    return `${base}/latest_version?id=${videoId}&itag=140&_=${Date.now()}`;
 }
 
 window.fetchAudioUrlFromApi = async (videoId) => {
@@ -296,7 +297,7 @@ AUDIO.addEventListener('playing', () => {
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     
-    // Explicitly notify Android OS MediaSession to keep audio process active
+    // Explicit MediaSession state lock for Mobile Chrome background process persistence
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'playing';
     }
