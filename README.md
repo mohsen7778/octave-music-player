@@ -19,7 +19,7 @@
 
 <br>
 
-**Live Demo:** [https://mohsen7778.github.io/octavemusicapp/](https://mohsen7778.github.io/octavemusicapp/)  
+**Live Demo:** [https://octavemusic.pages.dev/](https://octavemusic.pages.dev/)  
 *(This link is provided as a technological demonstration. Do not rely on it for permanent usage. Deploy your own static instance for optimal API performance.)*
 
 </div>
