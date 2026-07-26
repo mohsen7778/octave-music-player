@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Audio Engine
-// Piped Stream Proxying (Bypasses Google CDN 403 & iFrame Freeze)
+// Patience-First Native Audio Buffer + Piped Stream Proxying
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -57,7 +57,7 @@ if (isBrave) {
     console.log("Octave: Brave detected -> iFrame Engine locked.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome/Standard Browser -> Native Engine with Piped Proxy.");
+    console.log("Octave: Chrome/Standard Browser -> Native Engine active.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
@@ -97,9 +97,7 @@ window.PIPED_INSTANCES = [
     'https://pipedapi.leptons.xyz',
     'https://pipedapi.adminforge.de',
     'https://api.piped.private.coffee',
-    'https://pipedapi.drgns.space',
-    'https://pipedapi.nosebs.ru',
-    'https://pipedapi.owo.si'
+    'https://pipedapi.drgns.space'
 ];
 
 window.pipedIdx = Math.floor(Math.random() * window.PIPED_INSTANCES.length);
@@ -109,7 +107,7 @@ async function fetchPipedAudioStreamUrl(videoId) {
         const base = window.PIPED_INSTANCES[(window.pipedIdx + i) % window.PIPED_INSTANCES.length];
         try {
             const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 6000);
+            const id = setTimeout(() => controller.abort(), 15000); // Expanded 15s window to allow slow audio extraction
             const r = await fetch(`${base}/streams/${videoId}`, { signal: controller.signal });
             clearTimeout(id);
             if (r.ok) {
@@ -117,7 +115,6 @@ async function fetchPipedAudioStreamUrl(videoId) {
                 if (data && data.audioStreams && data.audioStreams.length > 0) {
                     const bestAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
                     if (bestAudio) {
-                        // PREFER proxyUrl TO PREVENT 403 CDN BLOCKS ON MOBILE CHROME
                         const targetUrl = bestAudio.proxyUrl || bestAudio.url;
                         if (targetUrl) {
                             window.pipedIdx = (window.pipedIdx + i) % window.PIPED_INSTANCES.length;
@@ -282,10 +279,9 @@ const tryNextStream = async (videoId) => {
     }
 
     if (!streamUrl) {
-        console.warn("Octave: Stream unresolvable.");
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
+        console.warn("Octave: Stream unresolvable on Native. Falling back to iFrame.");
+        activeEngine = 'iframe';
+        playViaIframe(videoId);
         return;
     }
 
@@ -293,11 +289,11 @@ const tryNextStream = async (videoId) => {
     AUDIO.load();
     resumeKeepalive();
 
+    // No early watchdog cancellation: allow native audio as much time as Chrome needs to buffer
     AUDIO.play().catch(() => {
-        console.warn("Octave: Native audio play rejected.");
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
+        console.warn("Octave: Native audio play rejected. Falling back to iFrame.");
+        activeEngine = 'iframe';
+        playViaIframe(videoId);
     });
 };
 
@@ -367,15 +363,14 @@ AUDIO.addEventListener('error', async () => {
         return;
     }
 
-    // Try next Piped instance on audio error
-    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED_INSTANCES.length;
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     if (track && track.videoId) {
-        tryNextStream(track.videoId);
+        activeEngine = 'iframe';
+        playViaIframe(track.videoId);
     }
 });
 
-// --- YOUTUBE IFRAME ENGINE (FOR BRAVE ONLY) ---
+// --- YOUTUBE IFRAME ENGINE (OFFICIAL API) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
@@ -412,6 +407,7 @@ window.onYouTubeIframeAPIReady = () => {
 };
 
 async function playViaIframe(videoId) {
+    updatePlayIcons('fa-solid fa-spinner fa-spin');
     await ytReadyPromise;
     if (YTP && typeof YTP.loadVideoById === 'function') {
         YTP.loadVideoById({ videoId: videoId });
