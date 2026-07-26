@@ -1,4 +1,6 @@
-
+// ========================================
+// FILE: js/app.js
+// ========================================
 
 // ============================================================
 // app.js — Octave Full Flagship Engine
@@ -39,6 +41,84 @@ if (!window.escapeHTML) {
         return div.innerHTML;
     };
 }
+
+// --- LYRICS API IMPLEMENTATION ---
+window.fetchLyrics = async (artist, title) => {
+    if (!artist || !title) return '<div class="empty-state-text">Track information missing.</div>';
+    
+    const cleanArtist = artist.replace(/ - Topic$/i, '').replace(/vevo$/i, '').trim();
+    const cleanTitle = title.replace(/\( official audio \)/gi, '')
+                             .replace(/\( official video \)/gi, '')
+                             .replace(/\[ official audio \]/gi, '')
+                             .replace(/\[ official video \]/gi, '')
+                             .replace(/\( lyric video \)/gi, '')
+                             .replace(/ft\..*/gi, '')
+                             .replace(/feat\..*/gi, '')
+                             .trim();
+
+    try {
+        const lrcUrl = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(cleanArtist)}&track_name=${encodeURIComponent(cleanTitle)}`;
+        const r = await fetch(lrcUrl);
+        if (r.ok) {
+            const data = await r.json();
+            const text = data.plainLyrics || data.syncedLyrics;
+            if (text) {
+                return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(text)}</div>`;
+            }
+        }
+    } catch(e) {}
+
+    try {
+        const ovhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`;
+        const r2 = await fetch(ovhUrl);
+        if (r2.ok) {
+            const data2 = await r2.json();
+            if (data2.lyrics) {
+                return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(data2.lyrics)}</div>`;
+            }
+        }
+    } catch(e) {}
+
+    return '<div class="empty-state-text" style="padding: 40px 0; text-align: center;">No lyrics found for this track.</div>';
+};
+
+// --- ARTIST PROFILE IMPLEMENTATION ---
+window.fetchFullArtistProfile = async (artistName) => {
+    const cleanName = (artistName || 'Unknown Artist').replace(/ - Topic$/i, '').trim();
+    
+    if (window.OCTAVE && window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanName]) {
+        return window.OCTAVE.artistCache[cleanName];
+    }
+
+    let bio = `Artist ${cleanName} on Octave Audio.`;
+    let banner = '';
+    let tracks = [];
+
+    try {
+        const wikiUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanName)}`;
+        const wikiRes = await fetch(wikiUrl);
+        if (wikiRes.ok) {
+            const wikiData = await wikiRes.json();
+            if (wikiData.extract) bio = wikiData.extract;
+            if (wikiData.thumbnail && wikiData.thumbnail.source) banner = wikiData.thumbnail.source;
+        }
+    } catch(e) {}
+
+    try {
+        const searchResults = await window.performSearch(`${cleanName} top songs audio`);
+        if (searchResults && searchResults.length > 0) {
+            tracks = searchResults;
+        }
+    } catch(e) {}
+
+    const profile = { name: cleanName, bio, banner, tracks };
+    if (window.OCTAVE && window.OCTAVE.artistCache) {
+        window.OCTAVE.artistCache[cleanName] = profile;
+        if (typeof window.saveCache === 'function') window.saveCache();
+    }
+
+    return profile;
+};
 
 window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
@@ -404,14 +484,10 @@ window.sendSearchLog = async (msg) => {
     } catch(e) {}
 };
 
-// REWRITTEN: Robust multi-node search with direct-fetch + proxy fallback
 window.performSearch = async (query) => {
     const currentId = window.searchSessionId;
-    // Fire-and-forget log — do NOT block search on telemetry
     window.sendSearchLog(`Started search for: "${query}"`);
 
-    // Updated working endpoints as of July 2026
-    // Invidious instances usually have CORS enabled, so we try direct first.
     const endpoints = [
         { type: 'invidious', url: 'https://inv.nadeko.net' },
         { type: 'invidious', url: 'https://invidious.nerdvpn.de' },
@@ -434,8 +510,6 @@ window.performSearch = async (query) => {
                 ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
                 : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
 
-            // Invidious: try direct first (CORS usually enabled), then proxy fallback
-            // Piped: must use proxy because CORS is rarely enabled
             const urlsToTry = ep.type === 'invidious' 
                 ? [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`]
                 : [`https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
@@ -1214,5 +1288,3 @@ document.getElementById('start-yt-import')?.addEventListener('click', async () =
     btn.innerHTML = 'Import';
     btn.disabled = false;
 });
-
-
