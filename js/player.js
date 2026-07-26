@@ -3,8 +3,8 @@
 // ========================================
 
 // ============================================================
-// player.js Octave Audio Engine
-// Mobile Chrome Background Lock + Native Audio Session Anchor
+// player.js Octave Adaptive Engine
+// Piped API Native Stream for Chrome + Strict iFrame Lock for Brave
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -46,10 +46,7 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// Clear stale preferences
-localStorage.removeItem('octave_engine_pref');
-
-// STRICT BROWSER SEPARATION
+// --- STRICT BROWSER ENGINE SEPARATION ---
 const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
 
 if (isBrave) {
@@ -57,49 +54,47 @@ if (isBrave) {
     console.log("Octave: Brave detected -> iFrame Engine locked.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome detected -> Native Engine enabled for background playback.");
+    console.log("Octave: Chrome/Standard Browser -> Piped API Native Engine enabled.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
 
-window.INVIDIOUS = [
-    'https://inv.nadeko.net',
-    'https://invidious.nerdvpn.de',
-    'https://yt.chocolatemoo53.com',
-    'https://invidious.tiekoetter.com',
-    'https://inv.thepixora.com',
-    'https://invidious.f5.si'
+// --- PIPED INSTANCES (FOR CHROME NATIVE STREAMING) ---
+window.PIPED_INSTANCES = [
+    'https://pipedapi.kavin.rocks',
+    'https://api.piped.private.coffee',
+    'https://pipedapi.mha.fi',
+    'https://pipedapi.projectsegfau.lt',
+    'https://pipedapi.tokhmi.xyz',
+    'https://piped-api.garudalinux.org'
 ];
 
-window.instanceHealth = {};
-window.INVIDIOUS.forEach(inst => {
-    window.instanceHealth[inst] = { failures: 0, lastFailure: 0, lastSuccess: 0 };
-});
+window.pipedIdx = Math.floor(Math.random() * window.PIPED_INSTANCES.length);
 
-function getHealthyInstance() {
-    const now = Date.now();
-    const sorted = [...window.INVIDIOUS].sort((a, b) => {
-        const hA = window.instanceHealth[a];
-        const hB = window.instanceHealth[b];
-        const failA = (now - hA.lastFailure > 600000) ? 0 : hA.failures;
-        const failB = (now - hB.lastFailure > 600000) ? 0 : hB.failures;
-        return failA - failB;
-    });
-    return sorted[0] || window.INVIDIOUS[0];
-}
-
-function markInstanceSuccess(base) {
-    if (window.instanceHealth[base]) {
-        window.instanceHealth[base].failures = 0;
-        window.instanceHealth[base].lastSuccess = Date.now();
+async function fetchPipedAudioStreamUrl(videoId) {
+    for (let i = 0; i < window.PIPED_INSTANCES.length; i++) {
+        const base = window.PIPED_INSTANCES[(window.pipedIdx + i) % window.PIPED_INSTANCES.length];
+        try {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 6000);
+            const r = await fetch(`${base}/streams/${videoId}`, { signal: controller.signal });
+            clearTimeout(id);
+            if (r.ok) {
+                const data = await r.json();
+                if (data && data.audioStreams && data.audioStreams.length > 0) {
+                    // Sort audio streams to pick best quality (prefer m4a/opus with valid bitrate)
+                    const bestAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+                    if (bestAudio && bestAudio.url) {
+                        window.pipedIdx = (window.pipedIdx + i) % window.PIPED_INSTANCES.length;
+                        return bestAudio.url;
+                    }
+                }
+            }
+        } catch (e) {
+            continue;
+        }
     }
-}
-
-function markInstanceFailure(base) {
-    if (window.instanceHealth[base]) {
-        window.instanceHealth[base].failures++;
-        window.instanceHealth[base].lastFailure = Date.now();
-    }
+    return null;
 }
 
 window.initTrackStats = (videoId) => {
@@ -200,21 +195,21 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// --- NATIVE AUDIO PLAYER CONFIGURATION ---
+// --- NATIVE AUDIO PLAYER CONFIGURATION (CHROME) ---
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
-
-const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
 
 const PRELOAD_AUDIO = new Audio(); 
 PRELOAD_AUDIO.preload = 'auto';
 let preloadedVideoId = null;
+let preloadedStreamUrl = null;
 
 let audioUnlocked = false;
 function unlockAudioEngine() {
     if (audioUnlocked) return;
     audioUnlocked = true;
 
+    const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
     AUDIO.src = SILENT_MP3;
     AUDIO.play().then(() => { AUDIO.pause(); }).catch(() => {});
 
@@ -231,59 +226,42 @@ function unlockAudioEngine() {
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
-function getStreamUrl(videoId) {
-    const base = getHealthyInstance();
-    return `${base}/latest_version?id=${videoId}&itag=140&_=${Date.now()}`;
-}
-
-window.fetchAudioUrlFromApi = async (videoId) => {
-    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-        const base = window.INVIDIOUS[i];
-        try {
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 6000);
-            const r = await fetch(`${base}/api/v1/videos/${videoId}?fields=adaptiveFormats`, { signal: controller.signal });
-            clearTimeout(id);
-            if (r.ok) {
-                const d = await r.json();
-                const audioItags = [251, 250, 249, 140, 141, 139];
-                const format = d.adaptiveFormats?.find(f => audioItags.includes(parseInt(f.itag)));
-                if (format && format.url) {
-                    markInstanceSuccess(base);
-                    return format.url;
-                }
-            }
-        } catch (e) {
-            markInstanceFailure(base);
-            continue; 
-        }
-    }
-    return null;
-};
-
-function preloadNextTrackInQueue() {
+async function preloadNextTrackInQueue() {
     if (activeEngine !== 'native' || window.OCTAVE.currentIndex < 0) return;
     const nextIdx = window.OCTAVE.currentIndex + 1;
     if (nextIdx < window.OCTAVE.queue.length) {
         const nextId = window.OCTAVE.queue[nextIdx].videoId;
-        PRELOAD_AUDIO.src = getStreamUrl(nextId);
-        preloadedVideoId = nextId;
-        PRELOAD_AUDIO.load(); 
+        const streamUrl = await fetchPipedAudioStreamUrl(nextId);
+        if (streamUrl) {
+            PRELOAD_AUDIO.src = streamUrl;
+            preloadedVideoId = nextId;
+            preloadedStreamUrl = streamUrl;
+            PRELOAD_AUDIO.load(); 
+        }
     }
 }
 
-const tryNextStream = (videoId) => {
+const tryNextStream = async (videoId) => {
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
 
-    const currentBase = getHealthyInstance();
-    const streamUrl = (preloadedVideoId === videoId && PRELOAD_AUDIO.src) ? PRELOAD_AUDIO.src : getStreamUrl(videoId);
+    let streamUrl = null;
+    if (preloadedVideoId === videoId && preloadedStreamUrl) {
+        streamUrl = preloadedStreamUrl;
+    } else {
+        streamUrl = await fetchPipedAudioStreamUrl(videoId);
+    }
+
+    if (!streamUrl) {
+        console.error("Octave: Failed to fetch Piped stream across all instances.");
+        updatePlayIcons('fa-solid fa-play');
+        window.OCTAVE.isPlaying = false;
+        window.OCTAVE.isTransitioning = false;
+        return;
+    }
 
     AUDIO.src = streamUrl;
     AUDIO.load();
-    AUDIO.play().then(() => {
-        markInstanceSuccess(currentBase);
-    }).catch(() => {
-        markInstanceFailure(currentBase);
+    AUDIO.play().catch(() => {
         updatePlayIcons('fa-solid fa-play');
         window.OCTAVE.isPlaying = false;
         window.OCTAVE.isTransitioning = false;
@@ -297,7 +275,6 @@ AUDIO.addEventListener('playing', () => {
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     
-    // Explicit background audio session state lock
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'playing';
     }
@@ -309,7 +286,7 @@ AUDIO.addEventListener('playing', () => {
 AUDIO.addEventListener('pause', () => {
     if (activeEngine !== 'native') return;
 
-    // Prevent background tab switch from triggering pause
+    // Guard against background auto-pauses when switching apps or minimizing Chrome
     if (document.hidden && window.OCTAVE.isPlaying) {
         AUDIO.play().catch(() => {});
         return;
@@ -339,36 +316,10 @@ AUDIO.addEventListener('error', async () => {
         return;
     }
 
-    const currentBase = getHealthyInstance();
-    markInstanceFailure(currentBase);
-
+    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED_INSTANCES.length;
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     
     if (track && track.videoId) {
-        try {
-            const directUrl = await window.fetchAudioUrlFromApi(track.videoId);
-            if (directUrl) {
-                AUDIO.src = directUrl;
-                AUDIO.load();
-                await AUDIO.play();
-                return;
-            }
-        } catch(directErr) {
-            markInstanceFailure(currentBase);
-        }
-    }
-
-    if (!window.OCTAVE.currentTrackErrorRetries) window.OCTAVE.currentTrackErrorRetries = 0;
-    window.OCTAVE.currentTrackErrorRetries++;
-
-    if (window.OCTAVE.currentTrackErrorRetries >= window.INVIDIOUS.length) {
-        window.OCTAVE.currentTrackErrorRetries = 0;
-        window.OCTAVE.isTransitioning = false;
-        updatePlayIcons('fa-solid fa-play');
-        return;
-    }
-
-    if (window.OCTAVE.currentIndex >= 0) {
         tryNextStream(track.videoId);
     }
 });
