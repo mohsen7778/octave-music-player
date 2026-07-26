@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Audio Engine
-// Mobile Chrome Background Fix + Invidious Local Stream Proxy
+// Mobile Chrome Unkilled Background Play + MediaSession Lock
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -46,25 +46,21 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// --- STRICT BROWSER ENGINE SEPARATION ---
+// Clear stale iframe override to force Chrome onto native background audio
+localStorage.removeItem('octave_engine_pref');
+
 const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
 
-// Brave uses iframe engine; Chrome uses native HTML5 audio for background playback
 if (isBrave) {
     window.AUDIO_ENGINE = 'iframe';
     console.log("Octave: Brave detected -> iFrame Engine enabled.");
 } else {
-    // Default Chrome/Android to native HTML5 audio for background play
-    const storedPref = localStorage.getItem('octave_engine_pref');
-    window.AUDIO_ENGINE = storedPref ? storedPref : 'native';
-    console.log(`Octave: Chrome/Standard Browser -> Engine [${window.AUDIO_ENGINE}]`);
+    window.AUDIO_ENGINE = 'native';
+    console.log("Octave: Mobile Chrome detected -> Native Engine forced for background play.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
-let globalNativeFailures = 0;
-const MAX_NATIVE_STRIKES = 3;
 
-// --- PER-INSTANCE HEALTH TRACKING ---
 window.INVIDIOUS = [
     'https://inv.nadeko.net',
     'https://invidious.nerdvpn.de',
@@ -206,7 +202,6 @@ window.importVault = (event) => {
 // --- NATIVE AUDIO PLAYER CONFIGURATION ---
 const AUDIO = new Audio();
 AUDIO.preload = 'auto';
-// DO NOT set AUDIO.crossOrigin = 'anonymous' (causes CORS blocks on googlevideo CDN)
 
 const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
 
@@ -235,7 +230,6 @@ function unlockAudioEngine() {
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
-// Uses local=true to proxy stream directly via Invidious (bypasses Google CDN blocks)
 function getStreamUrl(videoId) {
     const base = getHealthyInstance();
     return `${base}/latest_version?id=${videoId}&itag=140&local=true&_=${Date.now()}`;
@@ -277,20 +271,6 @@ function preloadNextTrackInQueue() {
     }
 }
 
-function handleNativeFailure() {
-    if (isBrave) return;
-
-    globalNativeFailures++;
-    console.warn(`Octave: Native failure logged (${globalNativeFailures}/${MAX_NATIVE_STRIKES})`);
-    
-    if (globalNativeFailures >= MAX_NATIVE_STRIKES) {
-        console.warn("Octave: Native strike limit reached. Fallback to iframe.");
-        localStorage.setItem('octave_engine_pref', 'iframe');
-        window.AUDIO_ENGINE = 'iframe';
-        activeEngine = 'iframe';
-    }
-}
-
 const tryNextStream = (videoId) => {
     updatePlayIcons('fa-solid fa-spinner fa-spin'); 
 
@@ -300,11 +280,9 @@ const tryNextStream = (videoId) => {
     AUDIO.src = streamUrl;
     AUDIO.load();
     AUDIO.play().then(() => {
-        globalNativeFailures = 0;
         markInstanceSuccess(currentBase);
-    }).catch((err) => {
+    }).catch(() => {
         markInstanceFailure(currentBase);
-        handleNativeFailure();
         updatePlayIcons('fa-solid fa-play');
         window.OCTAVE.isPlaying = false;
         window.OCTAVE.isTransitioning = false;
@@ -317,6 +295,12 @@ AUDIO.addEventListener('playing', () => {
     window.OCTAVE.isTransitioning = false; 
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
+    
+    // Explicitly notify Android OS MediaSession to keep audio process active
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'playing';
+    }
+
     startProgressTracking();
     syncMediaSessionPosition();
 });
@@ -324,6 +308,11 @@ AUDIO.addEventListener('playing', () => {
 AUDIO.addEventListener('pause', () => {
     if (activeEngine !== 'native') return;
     window.OCTAVE.isPlaying = false;
+    
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'paused';
+    }
+
     const fpIcon = document.querySelector('#fp-play i');
     if (fpIcon && !fpIcon.classList.contains('fa-spinner')) {
         updatePlayIcons('fa-solid fa-play');
@@ -339,7 +328,6 @@ AUDIO.addEventListener('ended', () => {
 AUDIO.addEventListener('error', async () => {
     if (activeEngine !== 'native') return;
 
-    // Ignore user-triggered aborts
     if (AUDIO.error && AUDIO.error.code === MediaError.MEDIA_ERR_ABORTED) {
         return;
     }
@@ -356,7 +344,6 @@ AUDIO.addEventListener('error', async () => {
                 AUDIO.src = directUrl;
                 AUDIO.load();
                 await AUDIO.play();
-                globalNativeFailures = 0;
                 return;
             }
         } catch(directErr) {
@@ -364,17 +351,10 @@ AUDIO.addEventListener('error', async () => {
         }
     }
 
-    handleNativeFailure();
-
     if (!window.OCTAVE.currentTrackErrorRetries) window.OCTAVE.currentTrackErrorRetries = 0;
     window.OCTAVE.currentTrackErrorRetries++;
 
     if (window.OCTAVE.currentTrackErrorRetries >= window.INVIDIOUS.length) {
-        if (track) {
-            activeEngine = 'iframe';
-            playViaIframe(track.videoId);
-            return;
-        }
         window.OCTAVE.currentTrackErrorRetries = 0;
         window.OCTAVE.isTransitioning = false;
         updatePlayIcons('fa-solid fa-play');
@@ -386,7 +366,7 @@ AUDIO.addEventListener('error', async () => {
     }
 });
 
-// --- PROMISE-BASED YOUTUBE IFRAME QUEUE ---
+// --- YOUTUBE IFRAME ENGINE (FOR BRAVE) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
@@ -436,10 +416,12 @@ function onYTS(e) {
         window.OCTAVE.isTransitioning = false; 
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
         startProgressTracking();
         syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
         window.OCTAVE.isPlaying = false;
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
         const fpIcon = document.querySelector('#fp-play i');
         if (fpIcon && !fpIcon.classList.contains('fa-spinner')) {
             updatePlayIcons('fa-solid fa-play');
@@ -508,10 +490,7 @@ window.togglePlay = () => {
         ytReadyPromise.then(() => {
             if (window.OCTAVE.isPlaying) {
                 YTP.pauseVideo();
-                try { AUDIO.pause(); } catch(e) {}
             } else {
-                AUDIO.src = SILENT_MP3;
-                AUDIO.play().catch(() => {});
                 YTP.playVideo();
             }
         });
@@ -680,13 +659,7 @@ window.playTrackByIndex = (index) => {
     activeEngine = window.AUDIO_ENGINE; 
 
     if (activeEngine === 'iframe') {
-        try { AUDIO.pause(); } catch(e) {}
-        AUDIO.src = SILENT_MP3;
-        AUDIO.play().then(() => {
-            playViaIframe(track.videoId);
-        }).catch(() => {
-            playViaIframe(track.videoId);
-        });
+        playViaIframe(track.videoId);
     } else {
         if (YTP && typeof YTP.pauseVideo === 'function') YTP.pauseVideo();
         tryNextStream(track.videoId); 
