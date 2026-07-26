@@ -1,3 +1,7 @@
+// ========================================
+// FILE: js/algorithm.js
+// ========================================
+
 // ============================================================
 // algorithm.js — Octave Top-Notch Auto-DJ & Prediction Engine
 // Strict Music Firewall + Direct YouTube CDN Images
@@ -13,9 +17,24 @@ if (!window.escapeHTML) {
     };
 }
 
+// Failsafe fallback array in case algorithm.js loads before player.js
+if (!window.INVIDIOUS || !Array.isArray(window.INVIDIOUS) || window.INVIDIOUS.length === 0) {
+    window.INVIDIOUS = [
+        'https://inv.nadeko.net',
+        'https://invidious.nerdvpn.de',
+        'https://yt.chocolatemoo53.com',
+        'https://invidious.tiekoetter.com',
+        'https://inv.thepixora.com',
+        'https://invidious.f5.si'
+    ];
+}
+if (typeof window.invIdx === 'undefined') {
+    window.invIdx = Math.floor(Math.random() * window.INVIDIOUS.length);
+}
+
 window.calculateTrackScore = (track) => {
     if (!track || !track.videoId) return -100;
-    const stats = window.OCTAVE.playStats[track.videoId] || { plays: 0, skips: 0, completes: 0, manual: 0, activeViews: 0 };
+    const stats = (window.OCTAVE && window.OCTAVE.playStats && window.OCTAVE.playStats[track.videoId]) || { plays: 0, skips: 0, completes: 0, manual: 0, activeViews: 0 };
 
     let score = 0;
     score += (stats.plays * 1);
@@ -24,12 +43,12 @@ window.calculateTrackScore = (track) => {
     score += (stats.activeViews * 1);
     score -= (stats.skips * 10); 
 
-    if (window.OCTAVE.liked && window.OCTAVE.liked[track.videoId]) score += 20;
+    if (window.OCTAVE && window.OCTAVE.liked && window.OCTAVE.liked[track.videoId]) score += 20;
 
     let inPlaylist = false;
-    if (window.OCTAVE.playlists) {
+    if (window.OCTAVE && window.OCTAVE.playlists) {
         Object.values(window.OCTAVE.playlists).forEach(pl => {
-            if (pl.find(t => t.videoId === track.videoId)) inPlaylist = true;
+            if (Array.isArray(pl) && pl.find(t => t.videoId === track.videoId)) inPlaylist = true;
         });
     }
     if (inPlaylist) score += 5;
@@ -44,38 +63,52 @@ window.fetchAutoDjBatch = async () => {
     window.isFetchingBatch = true;
 
     try {
-        const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || []), ...(window.OCTAVE.queue || [])];
+        const octave = window.OCTAVE || {};
+        const liked = octave.liked || {};
+        const recentPlayed = octave.recentPlayed || [];
+        const queue = octave.queue || [];
+        const sessionHistory = octave.sessionHistory || [];
+
+        const allKnown = [...Object.values(liked), ...recentPlayed, ...queue];
         const uniqueKnown = Array.from(new Map(allKnown.map(t => [t.videoId, t])).values());
 
         let topSeeds = uniqueKnown
-            .filter(t => !window.OCTAVE.sessionHistory.includes(t.videoId))
+            .filter(t => !sessionHistory.includes(t.videoId))
             .sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a))
             .slice(0, 3);
 
-        if (topSeeds.length === 0 && window.OCTAVE.recentPlayed.length > 0) {
-            topSeeds.push(window.OCTAVE.recentPlayed[0]);
+        if (topSeeds.length === 0 && recentPlayed.length > 0) {
+            topSeeds.push(recentPlayed[0]);
         }
 
         let candidatePool = [];
 
-        // METHOD 1: Fetch recommended videos aggressively across safe instances
+        // METHOD 1: Fetch recommended videos across safe instances with CORS fallback
         if (topSeeds.length > 0) {
             for (const seed of topSeeds) {
                 for (let i = 0; i < window.INVIDIOUS.length; i++) {
                     const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-                    try {
-                        const controller = new AbortController();
-                        const id = setTimeout(() => controller.abort(), 8000); 
-                        const r = await fetch(`${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`, { signal: controller.signal });
-                        clearTimeout(id);
-                        if (r.ok) {
-                            const d = await r.json();
-                            if (d.recommendedVideos && d.recommendedVideos.length > 0) {
-                                candidatePool.push(...d.recommendedVideos);
-                                break; 
+                    const rawUrl = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
+                    const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
+
+                    let fetched = false;
+                    for (const fetchUrl of urlsToTry) {
+                        try {
+                            const controller = new AbortController();
+                            const id = setTimeout(() => controller.abort(), 6000); 
+                            const r = await fetch(fetchUrl, { signal: controller.signal });
+                            clearTimeout(id);
+                            if (r.ok) {
+                                const d = await r.json();
+                                if (d.recommendedVideos && d.recommendedVideos.length > 0) {
+                                    candidatePool.push(...d.recommendedVideos);
+                                    fetched = true;
+                                    break; 
+                                }
                             }
-                        }
-                    } catch (e) { continue; }
+                        } catch (e) { continue; }
+                    }
+                    if (fetched) break;
                 }
             }
         }
@@ -95,17 +128,28 @@ window.fetchAutoDjBatch = async () => {
         // METHOD 3: Nuclear Fallback -> Global Popular Music
         if (candidatePool.length < 5) {
             for (let i = 0; i < window.INVIDIOUS.length; i++) {
-                try {
-                    const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-                    const r = await fetch(`${base}/api/v1/popular?videoCategory=10`);
-                    if (r.ok) {
-                        const d = await r.json();
-                        if (d && d.length > 0) {
-                            candidatePool.push(...d);
-                            break;
+                const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+                const rawUrl = `${base}/api/v1/popular?videoCategory=10`;
+                const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
+
+                let fetched = false;
+                for (const fetchUrl of urlsToTry) {
+                    try {
+                        const controller = new AbortController();
+                        const id = setTimeout(() => controller.abort(), 6000);
+                        const r = await fetch(fetchUrl, { signal: controller.signal });
+                        clearTimeout(id);
+                        if (r.ok) {
+                            const d = await r.json();
+                            if (d && Array.isArray(d) && d.length > 0) {
+                                candidatePool.push(...d);
+                                fetched = true;
+                                break;
+                            }
                         }
-                    }
-                } catch(e) { continue; }
+                    } catch(e) { continue; }
+                }
+                if (fetched) break;
             }
         }
 
@@ -118,15 +162,16 @@ window.fetchAutoDjBatch = async () => {
         ];
 
         const freshRecs = candidatePool.filter(v => {
+            if (!v || !v.videoId) return false;
             // STRICT TIME BOUNDS: Must be between 2 mins (120s) and 7 mins (420s)
-            const isMusicLength = v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420; 
-            const notPlayedThisSession = !window.OCTAVE.sessionHistory.includes(v.videoId);
+            const isMusicLength = v.lengthSeconds ? (v.lengthSeconds >= 120 && v.lengthSeconds <= 420) : true; 
+            const notPlayedThisSession = !sessionHistory.includes(v.videoId);
             const notPenalized = window.calculateTrackScore({ videoId: v.videoId }) >= -5; 
 
             const titleLower = (v.title || '').toLowerCase();
             const authorLower = (v.author || '').toLowerCase();
             const noBadWords = !badWords.some(bw => titleLower.includes(bw) || authorLower.includes(bw));
-            const notInQueue = !window.OCTAVE.queue.some(q => q.videoId === v.videoId);
+            const notInQueue = !queue.some(q => q.videoId === v.videoId);
 
             return isMusicLength && notPlayedThisSession && notPenalized && noBadWords && notInQueue;
         });
@@ -141,74 +186,73 @@ window.fetchAutoDjBatch = async () => {
             thumb: pick.videoId ? `https://i.ytimg.com/vi/${pick.videoId}/hqdefault.jpg` : ''
         }));
 
-        if (next5.length > 0) {
+        if (next5.length > 0 && window.OCTAVE && Array.isArray(window.OCTAVE.queue)) {
             window.OCTAVE.queue.push(...next5);
-            window.saveCache();
+            if (typeof window.saveCache === 'function') window.saveCache();
         }
 
     } catch (e) {
-        console.warn("Octave: Silent Auto-DJ batch fetch skipped.");
+        console.warn("Octave: Silent Auto-DJ batch fetch skipped.", e);
     } finally {
         window.isFetchingBatch = false;
     }
 };
 
-// FIX: Corrected typo fetchAutoDJBatch → fetchAutoDjBatch (matches the actual function name above)
-// Also wrapped in a guard so it doesn't overwrite playTrackByIndex before player.js has set it up.
 setTimeout(() => {
     if (window.playTrackByIndex) {
         const originalPlayTrackByIndex = window.playTrackByIndex;
         window.playTrackByIndex = (index) => {
             originalPlayTrackByIndex(index);
-            // Pre-fetch more tracks when queue is running low
-            if (window.OCTAVE.queue.length - index <= 2) {
+            if (window.OCTAVE && window.OCTAVE.queue && (window.OCTAVE.queue.length - index <= 2)) {
                 setTimeout(() => {
-                    window.fetchAutoDjBatch(); // FIXED: was fetchAutoDJBatch (wrong case)
+                    window.fetchAutoDjBatch();
                 }, 2000);
             }
         };
     }
 }, 500); 
 
-// NOTE: Do NOT redefine playNextLogic here — player.js owns that function.
-// The player.js version calls fetchAutoDjBatch and generateDiscoverMix correctly.
-
 window.generateDiscoverMix = async () => {
-    const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
+    const allKnown = [...Object.values((window.OCTAVE && window.OCTAVE.liked) || {}), ...((window.OCTAVE && window.OCTAVE.recentPlayed) || [])];
     if (allKnown.length === 0) {
         alert("Play or like some songs first to build your taste profile!");
         return;
     }
 
     const dynamicView = document.getElementById('dynamic-view');
+    if (dynamicView) {
+        dynamicView.innerHTML = `
+            <div style="padding: 20px;">
+                <button class="icon-btn" onclick="document.querySelector('.nav-item.active').click()"><i class="fa-solid fa-arrow-left"></i></button>
+            </div>
+            <div style="padding: 60px 20px; text-align:center;">
+                <i class="fa-solid fa-wand-magic-sparkles fa-bounce" style="font-size: 40px; color: var(--accent); margin-bottom: 20px;"></i>
+                <h2>Brewing your mix...</h2>
+                <p style="color:var(--text-secondary);font-size:14px;margin-top:10px;">Analyzing taste profile via advanced predictive engine.</p>
+            </div>
+        `;
+    }
 
-    dynamicView.innerHTML = `
-        <div style="padding: 20px;">
-            <button class="icon-btn" onclick="document.querySelector('.nav-item.active').click()"><i class="fa-solid fa-arrow-left"></i></button>
-        </div>
-        <div style="padding: 60px 20px; text-align:center;">
-            <i class="fa-solid fa-wand-magic-sparkles fa-bounce" style="font-size: 40px; color: var(--accent); margin-bottom: 20px;"></i>
-            <h2>Brewing your mix...</h2>
-            <p style="color:var(--text-secondary);font-size:14px;margin-top:10px;">Analyzing taste profile via advanced predictive engine.</p>
-        </div>
-    `;
+    const backupQueue = [...((window.OCTAVE && window.OCTAVE.queue) || [])];
+    const backupIndex = window.OCTAVE ? window.OCTAVE.currentIndex : -1;
 
-    const backupQueue = [...window.OCTAVE.queue];
-    const backupIndex = window.OCTAVE.currentIndex;
-
-    window.OCTAVE.queue = [];
-    window.OCTAVE.currentIndex = -1;
+    if (window.OCTAVE) {
+        window.OCTAVE.queue = [];
+        window.OCTAVE.currentIndex = -1;
+    }
 
     await window.fetchAutoDjBatch(); 
 
-    if (window.OCTAVE.queue.length > 0) {
+    if (window.OCTAVE && window.OCTAVE.queue && window.OCTAVE.queue.length > 0) {
         window.OCTAVE.isNextTrackManual = true; 
         window.playTrackByIndex(0);
         const homeTab = document.querySelector('.nav-item[data-tab="home"]');
         if (homeTab) homeTab.click();
     } else {
-        window.OCTAVE.queue = backupQueue;
-        window.OCTAVE.currentIndex = backupIndex;
+        if (window.OCTAVE) {
+            window.OCTAVE.queue = backupQueue;
+            window.OCTAVE.currentIndex = backupIndex;
+        }
         alert("Algorithm failed to connect to network. Try again.");
         const homeTab = document.querySelector('.nav-item[data-tab="home"]');
         if (homeTab) homeTab.click(); 
@@ -230,46 +274,53 @@ window.fetchDailyRecommendations = async () => {
 
     for (let i = 0; i < window.INVIDIOUS.length; i++) {
         const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-        try {
-            let url = '';
-            if (topScored.length > 0) {
-                const seed = topScored[Math.floor(Math.random() * topScored.length)];
-                url = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
-            } else {
-                url = `${base}/api/v1/popular?videoCategory=10`; 
-            }
+        let url = '';
+        if (topScored.length > 0) {
+            const seed = topScored[Math.floor(Math.random() * topScored.length)];
+            url = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
+        } else {
+            url = `${base}/api/v1/popular?videoCategory=10`; 
+        }
 
-            const r = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            if (r.ok) {
-                const d = await r.json();
-                let newTracks = [];
+        const urlsToTry = [url, `https://corsproxy.io/?url=${encodeURIComponent(url)}`];
 
-                if (topScored.length > 0 && d.recommendedVideos) {
-                    newTracks = d.recommendedVideos.filter(v => v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420).slice(0, 10);
-                } else if (topScored.length === 0 && Array.isArray(d)) {
-                    newTracks = d.filter(v => v.lengthSeconds && v.lengthSeconds >= 120 && v.lengthSeconds <= 420).slice(0, 10);
-                }
+        let success = false;
+        for (const fetchUrl of urlsToTry) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 6000);
+            try {
+                const r = await fetch(fetchUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (r.ok) {
+                    const d = await r.json();
+                    let newTracks = [];
 
-                if (newTracks.length > 0) {
-                    window.OCTAVE.dailyRecs = {
-                        timestamp: now,
-                        tracks: newTracks.map(rec => ({
-                            videoId: rec.videoId, title: rec.title, author: rec.author,
-                            thumb: rec.videoId ? `https://i.ytimg.com/vi/${rec.videoId}/hqdefault.jpg` : ''
-                        }))
-                    };
-                    window.saveCache();
-                    const activeTab = document.querySelector('.nav-item.active');
-                    if (activeTab && activeTab.getAttribute('data-tab') === 'home') {
-                        window.renderHome();
+                    if (topScored.length > 0 && d.recommendedVideos) {
+                        newTracks = d.recommendedVideos.filter(v => v.lengthSeconds ? (v.lengthSeconds >= 120 && v.lengthSeconds <= 420) : true).slice(0, 10);
+                    } else if (topScored.length === 0 && Array.isArray(d)) {
+                        newTracks = d.filter(v => v.lengthSeconds ? (v.lengthSeconds >= 120 && v.lengthSeconds <= 420) : true).slice(0, 10);
                     }
-                    break;
+
+                    if (newTracks.length > 0) {
+                        window.OCTAVE.dailyRecs = {
+                            timestamp: now,
+                            tracks: newTracks.map(rec => ({
+                                videoId: rec.videoId, title: rec.title, author: rec.author,
+                                thumb: rec.videoId ? `https://i.ytimg.com/vi/${rec.videoId}/hqdefault.jpg` : ''
+                            }))
+                        };
+                        if (typeof window.saveCache === 'function') window.saveCache();
+                        const activeTab = document.querySelector('.nav-item.active');
+                        if (activeTab && activeTab.getAttribute('data-tab') === 'home' && typeof window.renderHome === 'function') {
+                            window.renderHome();
+                        }
+                        success = true;
+                        break;
+                    }
                 }
-            }
-        } catch(e) { continue; }
+            } catch(e) { continue; }
+        }
+        if (success) break;
     }
 };
 
@@ -280,9 +331,11 @@ window.fetchTrendingMusic = async () => {
     const now = Date.now();
     const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 
-    if (window.OCTAVE.trendingData && window.OCTAVE.trendingData.tracks && window.OCTAVE.trendingData.tracks.length > 0) {
+    if (window.OCTAVE && window.OCTAVE.trendingData && window.OCTAVE.trendingData.tracks && window.OCTAVE.trendingData.tracks.length > 0) {
         if (now - window.OCTAVE.trendingData.timestamp < THREE_DAYS) {
-            window.renderTrendingTracks(window.OCTAVE.trendingData.tracks, trendingGrid);
+            if (typeof window.renderTrendingTracks === 'function') {
+                window.renderTrendingTracks(window.OCTAVE.trendingData.tracks, trendingGrid);
+            }
             return;
         }
     }
@@ -316,13 +369,15 @@ window.fetchTrendingMusic = async () => {
 
                 const newTracks = Array.from(uniqueTracks.values());
 
-                if (newTracks.length > 0) {
+                if (newTracks.length > 0 && window.OCTAVE) {
                     window.OCTAVE.trendingData = {
                         timestamp: now,
                         tracks: newTracks
                     };
-                    window.saveCache();
-                    window.renderTrendingTracks(newTracks, trendingGrid);
+                    if (typeof window.saveCache === 'function') window.saveCache();
+                    if (typeof window.renderTrendingTracks === 'function') {
+                        window.renderTrendingTracks(newTracks, trendingGrid);
+                    }
                 }
             }
         }
@@ -332,6 +387,7 @@ window.fetchTrendingMusic = async () => {
 };
 
 window.renderTrendingTracks = (tracks, container) => {
+    if (!container) return;
     container.innerHTML = '';
     tracks.forEach(track => {
         const el = document.createElement('div');
@@ -347,13 +403,13 @@ window.renderTrendingTracks = (tracks, container) => {
 
                 if (results && results.length > 0) {
                     track.videoId = results[0].videoId;
-                    window.saveCache(); 
-                    window.playTrack(track);
+                    if (typeof window.saveCache === 'function') window.saveCache(); 
+                    if (typeof window.playTrack === 'function') window.playTrack(track);
                 } else {
                     alert("Could not find an audio stream for this track.");
                 }
             } else {
-                window.playTrack(track);
+                if (typeof window.playTrack === 'function') window.playTrack(track);
             }
         });
 
@@ -362,6 +418,7 @@ window.renderTrendingTracks = (tracks, container) => {
 };
 
 window.smartShufflePlaylist = (plName) => {
+    if (!window.OCTAVE || !window.OCTAVE.playlists) return;
     const pl = window.OCTAVE.playlists[plName];
     if (pl && pl.length > 0) {
         let sorted = [...pl].sort((a, b) => {
@@ -372,6 +429,6 @@ window.smartShufflePlaylist = (plName) => {
         });
         window.OCTAVE.queue = sorted; 
         window.OCTAVE.isNextTrackManual = true;
-        window.playTrackByIndex(0);
+        if (typeof window.playTrackByIndex === 'function') window.playTrackByIndex(0);
     }
 };
