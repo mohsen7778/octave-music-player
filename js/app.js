@@ -82,7 +82,7 @@ window.fetchLyrics = async (artist, title) => {
     return '<div class="empty-state-text" style="padding: 40px 0; text-align: center;">No lyrics found for this track.</div>';
 };
 
-// --- ARTIST PROFILE IMPLEMENTATION ---
+// --- ARTIST PROFILE & RECCOBEATS IMPLEMENTATION ---
 window.fetchFullArtistProfile = async (artistName) => {
     const cleanName = (artistName || 'Unknown Artist').replace(/ - Topic$/i, '').trim();
     
@@ -94,6 +94,7 @@ window.fetchFullArtistProfile = async (artistName) => {
     let banner = '';
     let tracks = [];
 
+    // 1. Wikipedia Summary & Image
     try {
         const wikiUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanName)}`;
         const wikiRes = await fetch(wikiUrl);
@@ -104,12 +105,45 @@ window.fetchFullArtistProfile = async (artistName) => {
         }
     } catch(e) {}
 
+    // 2. ReccoBeats API Integration for Artist Top Tracks
     try {
-        const searchResults = await window.performSearch(`${cleanName} top songs audio`);
-        if (searchResults && searchResults.length > 0) {
-            tracks = searchResults;
+        const rbUrl = `https://api.reccobeats.com/v1/artist/search?searchText=${encodeURIComponent(cleanName)}`;
+        const rbRes = await fetch(rbUrl);
+        if (rbRes.ok) {
+            const rbData = await rbRes.json();
+            if (rbData && rbData.content && rbData.content.length > 0) {
+                const artistObj = rbData.content[0];
+                if (artistObj.id) {
+                    const rbTracksRes = await fetch(`https://api.reccobeats.com/v1/artist/${artistObj.id}/track`);
+                    if (rbTracksRes.ok) {
+                        const rbTracksData = await rbTracksRes.json();
+                        if (rbTracksData && rbTracksData.content && rbTracksData.content.length > 0) {
+                            const topRb = rbTracksData.content.slice(0, 5);
+                            for (const rbT of topRb) {
+                                const searchRes = await window.performSearch(`${rbT.trackTitle} ${cleanName}`);
+                                if (searchRes && searchRes.length > 0) {
+                                    tracks.push(searchRes[0]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     } catch(e) {}
+
+    // 3. Fallback search if ReccoBeats returns fewer tracks
+    if (tracks.length < 3) {
+        try {
+            const searchResults = await window.performSearch(`${cleanName} top songs audio`);
+            if (searchResults && searchResults.length > 0) {
+                const existingIds = new Set(tracks.map(t => t.videoId));
+                searchResults.forEach(t => {
+                    if (!existingIds.has(t.videoId)) tracks.push(t);
+                });
+            }
+        } catch(e) {}
+    }
 
     const profile = { name: cleanName, bio, banner, tracks };
     if (window.OCTAVE && window.OCTAVE.artistCache) {
@@ -801,14 +835,16 @@ window.renderArtistPage = async (artistName) => {
         tracksHTML = '<div class="empty-state-text">No tracks found.</div>';
     }
 
-    const bannerStyle = profile.banner ? `background-image: url('${profile.banner}'); background-size: cover; background-position: center;` : `background: linear-gradient(135deg, var(--bg-deep), var(--glass-bg));`;
+    const bannerStyle = profile.banner 
+        ? `background-image: url('${profile.banner}'); background-size: cover; background-position: center 15%;` 
+        : `background: linear-gradient(135deg, var(--bg-deep), var(--glass-bg));`;
 
     dynamicView.innerHTML = `
-        <div style="position: relative; width: 100%; height: 250px; ${bannerStyle}">
-            <div style="position: absolute; inset: 0; background: linear-gradient(0deg, var(--bg-deep) 0%, transparent 100%);"></div>
-            <button class="icon-btn" onclick="const ht = document.querySelector('.nav-item[data-tab=\\'home\\']'); if(ht) ht.click();" style="position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.5); border-radius: 50%; padding: 10px; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;"><i class="fa-solid fa-arrow-left"></i></button>
-            <div style="position: absolute; bottom: 20px; left: 20px;">
-                <h1 style="font-size: 32px; font-weight: 800; text-shadow: 0 4px 10px rgba(0,0,0,0.8); margin:0;">${window.escapeHTML(profile.name)}</h1>
+        <div style="position: relative; width: 100%; height: 320px; ${bannerStyle}">
+            <div style="position: absolute; inset: 0; background: linear-gradient(0deg, var(--bg-deep) 0%, rgba(10,11,14,0.4) 60%, transparent 100%);"></div>
+            <button class="icon-btn" onclick="const ht = document.querySelector('.nav-item[data-tab=\\'home\\']'); if(ht) ht.click();" style="position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.6); border-radius: 50%; padding: 10px; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(10px); z-index: 2;"><i class="fa-solid fa-arrow-left"></i></button>
+            <div style="position: absolute; bottom: 20px; left: 20px; right: 20px; z-index: 2;">
+                <h1 style="font-size: 32px; font-weight: 800; text-shadow: 0 4px 15px rgba(0,0,0,0.9); margin:0; line-height: 1.2;">${window.escapeHTML(profile.name)}</h1>
             </div>
         </div>
         <div style="padding: 20px;">
