@@ -67,44 +67,92 @@ window.initTrackStats = (videoId) => {
 };
 
 window.saveCache = () => {
-    localStorage.setItem('octave_data', JSON.stringify({
-        liked: window.OCTAVE.liked,
-        playlists: window.OCTAVE.playlists,
-        recentPlayed: window.OCTAVE.recentPlayed.slice(0, 30),
-        recentSearches: window.OCTAVE.recentSearches.slice(0, 30),
-        playStats: window.OCTAVE.playStats, 
-        queue: window.OCTAVE.queue,
-        currentIndex: window.OCTAVE.currentIndex,
-        dailyRecs: window.OCTAVE.dailyRecs,
-        trendingData: window.OCTAVE.trendingData,
-        artistCache: window.OCTAVE.artistCache
-    }));
+    try {
+        localStorage.setItem('octave_data', JSON.stringify({
+            liked: window.OCTAVE.liked,
+            playlists: window.OCTAVE.playlists,
+            recentPlayed: window.OCTAVE.recentPlayed.slice(0, 50),
+            recentSearches: window.OCTAVE.recentSearches.slice(0, 30),
+            playStats: window.OCTAVE.playStats, 
+            queue: window.OCTAVE.queue.slice(0, 100),
+            currentIndex: window.OCTAVE.currentIndex,
+            dailyRecs: window.OCTAVE.dailyRecs,
+            trendingData: window.OCTAVE.trendingData,
+            artistCache: window.OCTAVE.artistCache
+        }));
+    } catch(e) {
+        console.warn('Octave: saveCache failed (storage full?)', e);
+        // If storage is full, try saving just the critical data
+        try {
+            localStorage.setItem('octave_data', JSON.stringify({
+                liked: window.OCTAVE.liked,
+                playlists: window.OCTAVE.playlists,
+                recentPlayed: window.OCTAVE.recentPlayed.slice(0, 20),
+                recentSearches: window.OCTAVE.recentSearches.slice(0, 10),
+                playStats: window.OCTAVE.playStats,
+                queue: window.OCTAVE.queue.slice(0, 20),
+                currentIndex: window.OCTAVE.currentIndex,
+                dailyRecs: { timestamp: 0, tracks: [] },
+                trendingData: { timestamp: 0, tracks: [] },
+                artistCache: {}
+            }));
+        } catch(e2) {
+            console.error('Octave: saveCache critical fallback also failed', e2);
+        }
+    }
 };
 
 function loadCache() {
-    const data = localStorage.getItem('octave_data');
-    if (data) {
-        const parsed = JSON.parse(data);
-        window.OCTAVE.liked = parsed.liked || {};
-        window.OCTAVE.playlists = parsed.playlists || {};
-        window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
-        window.OCTAVE.recentSearches = parsed.recentSearches ||[];
+    try {
+        const data = localStorage.getItem('octave_data');
+        if (data) {
+            const parsed = JSON.parse(data);
+            window.OCTAVE.liked = parsed.liked || {};
+            window.OCTAVE.playlists = parsed.playlists || {};
+            window.OCTAVE.recentPlayed = parsed.recentPlayed || [];
+            window.OCTAVE.recentSearches = parsed.recentSearches || [];
 
-        window.OCTAVE.playStats = parsed.playStats || {};
-        Object.keys(window.OCTAVE.playStats).forEach(key => {
-            if (typeof window.OCTAVE.playStats[key] === 'number') {
-                window.OCTAVE.playStats[key] = { plays: window.OCTAVE.playStats[key], skips: 0, completes: 0, manual: 0, activeViews: 0, lastPlayedTimeOfDay: '' };
+            window.OCTAVE.playStats = parsed.playStats || {};
+            Object.keys(window.OCTAVE.playStats).forEach(key => {
+                if (typeof window.OCTAVE.playStats[key] === 'number') {
+                    window.OCTAVE.playStats[key] = { plays: window.OCTAVE.playStats[key], skips: 0, completes: 0, manual: 0, activeViews: 0, lastPlayedTimeOfDay: '' };
+                }
+            });
+
+            window.OCTAVE.queue = parsed.queue || [];
+            window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
+
+            // Safety: if restored index is out of bounds, clamp it
+            if (window.OCTAVE.currentIndex >= window.OCTAVE.queue.length) {
+                window.OCTAVE.currentIndex = window.OCTAVE.queue.length - 1;
             }
-        });
 
-        window.OCTAVE.queue = parsed.queue ||[];
-        window.OCTAVE.currentIndex = parsed.currentIndex !== undefined ? parsed.currentIndex : -1;
-        window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks:[] };
-        window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks:[] };
-        window.OCTAVE.artistCache = parsed.artistCache || {};
+            window.OCTAVE.dailyRecs = parsed.dailyRecs || { timestamp: 0, tracks: [] };
+            window.OCTAVE.trendingData = parsed.trendingData || { timestamp: 0, tracks: [] };
+            window.OCTAVE.artistCache = parsed.artistCache || {};
+
+            console.log(`Octave: Loaded cache — ${window.OCTAVE.recentPlayed.length} recent tracks, ${Object.keys(window.OCTAVE.liked).length} liked`);
+        }
+    } catch(e) {
+        console.error('Octave: loadCache failed, starting fresh', e);
     }
 }
 loadCache();
+
+// ── PERSISTENCE SAFETY NET ──────────────────────────────────────────────────
+// Save on page unload so refresh/tab-close never loses the current session.
+window.addEventListener('beforeunload', () => {
+    window.saveCache();
+});
+
+// Also save every 30 seconds as belt-and-suspenders
+// (covers cases where beforeunload doesn't fire on mobile)
+setInterval(() => {
+    if (window.OCTAVE.isPlaying || window.OCTAVE.recentPlayed.length > 0) {
+        window.saveCache();
+    }
+}, 30000);
+// ───────────────────────────────────────────────────────────────────────────
 
 window.exportVault = () => {
     const data = localStorage.getItem('octave_data') || "{}";
@@ -361,7 +409,7 @@ function handleTrackEnded() {
     if (window.playNextLogic) window.playNextLogic();
 }
 
-// FIX: Robust playNextLogic that handles queue end properly
+// Robust playNextLogic that handles queue end properly
 window.playNextLogic = () => {
     if (window.OCTAVE.isTransitioning) return; 
 
@@ -410,7 +458,7 @@ function updatePlayIcons(iconClass) {
     if (fp) fp.className = iconClass;
 }
 
-// FIX: togglePlay now handles YTP not-ready state gracefully
+// togglePlay handles YTP not-ready state gracefully
 window.togglePlay = () => {
     if (window.OCTAVE.currentIndex === -1) return;
 
@@ -577,7 +625,8 @@ window.playTrackByIndex = (index) => {
         window.OCTAVE.sessionHistory.push(track.videoId);
     }
 
-    window.OCTAVE.recentPlayed =[track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)];
+    // Keep recentPlayed trimmed to 50
+    window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)].slice(0, 50);
     window.saveCache();
 
     updatePlayerUI(track);
@@ -587,7 +636,7 @@ window.playTrackByIndex = (index) => {
 
     if (activeEngine === 'iframe') {
         AUDIO.pause();
-        const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNyAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
+        const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
         AUDIO.src = SILENT_MP3;
         AUDIO.play().then(() => {
             if (ytReady && YTP) {
@@ -609,7 +658,7 @@ window.playTrackByIndex = (index) => {
 window.playTrack = (track) => {
     if (window.OCTAVE.isTransitioning) return; 
     window.OCTAVE.isNextTrackManual = true; 
-    window.OCTAVE.recentSearches =[track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
+    window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
     const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
     if (existIdx >= 0) {
         window.playTrackByIndex(existIdx);
@@ -877,7 +926,6 @@ function initPlayerDOM() {
             }
         }
 
-        // FIX: Add close-fp handler here as redundancy in case app.js misses it
         document.getElementById('close-fp')?.addEventListener('click', () => {
             document.getElementById('full-player')?.classList.remove('active');
         });
