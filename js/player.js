@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Audio Engine
-// Clean Native Streams + Mobile Chrome MediaSession Background Lock
+// Strict Engine Separation + Dynamic Fallback + MediaSession
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -46,18 +46,15 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// Clear stale iframe preference from previous runs
-localStorage.removeItem('octave_engine_pref');
-
-// STRICT BROWSER SEPARATION
+// Strict Browser Detection (Brave = iframe hardlock, Chrome = adaptive native with iframe fallback)
 const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
 
 if (isBrave) {
     window.AUDIO_ENGINE = 'iframe';
-    console.log("Octave: Brave detected -> iFrame Engine enabled.");
+    console.log("Octave: Brave detected -> Hardlocked to iFrame Engine.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome/Standard Mobile -> Native Engine enabled for unkilled background playback.");
+    console.log("Octave: Chrome/Standard Mobile -> Native Engine with iFrame fallback enabled.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
@@ -284,9 +281,15 @@ const tryNextStream = (videoId) => {
         markInstanceSuccess(currentBase);
     }).catch(() => {
         markInstanceFailure(currentBase);
-        updatePlayIcons('fa-solid fa-play');
-        window.OCTAVE.isPlaying = false;
-        window.OCTAVE.isTransitioning = false;
+        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        if (track) {
+            activeEngine = 'iframe';
+            playViaIframe(track.videoId);
+        } else {
+            updatePlayIcons('fa-solid fa-play');
+            window.OCTAVE.isPlaying = false;
+            window.OCTAVE.isTransitioning = false;
+        }
     });
 };
 
@@ -297,7 +300,6 @@ AUDIO.addEventListener('playing', () => {
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     
-    // Explicit MediaSession state lock for Mobile Chrome background process persistence
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'playing';
     }
@@ -352,22 +354,13 @@ AUDIO.addEventListener('error', async () => {
         }
     }
 
-    if (!window.OCTAVE.currentTrackErrorRetries) window.OCTAVE.currentTrackErrorRetries = 0;
-    window.OCTAVE.currentTrackErrorRetries++;
-
-    if (window.OCTAVE.currentTrackErrorRetries >= window.INVIDIOUS.length) {
-        window.OCTAVE.currentTrackErrorRetries = 0;
-        window.OCTAVE.isTransitioning = false;
-        updatePlayIcons('fa-solid fa-play');
-        return;
-    }
-
-    if (window.OCTAVE.currentIndex >= 0) {
-        tryNextStream(track.videoId);
+    if (track) {
+        activeEngine = 'iframe';
+        playViaIframe(track.videoId);
     }
 });
 
-// --- YOUTUBE IFRAME ENGINE (FOR BRAVE) ---
+// --- YOUTUBE IFRAME ENGINE (SAFE PROMISE QUEUE) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
