@@ -1,6 +1,6 @@
 <div align="center">
 
-# Under maintenance (due to 3 party server problems this player is no more functional until solved) 
+# Web App fully functional use brave browser) 
 
 **A fully private high performance client side music architecture running entirely in your browser with zero backend infrastructure.**
 
