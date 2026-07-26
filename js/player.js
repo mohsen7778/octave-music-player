@@ -1,3 +1,7 @@
+// ========================================
+// FILE: js/player.js
+// ========================================
+
 // ============================================================
 // player.js Octave Hybrid Audio Engine
 // Background Playback Active + Ghost Timeline + Juicy Liquid Colors
@@ -184,7 +188,7 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// UPDATED: Working Invidious instances as of July 2026
+// UPDATED: Working Invidious instances
 window.INVIDIOUS = [
     'https://inv.nadeko.net',
     'https://invidious.nerdvpn.de',
@@ -342,7 +346,6 @@ AUDIO.addEventListener('error', async () => {
     }
 });
 
-
 let YTP = null;
 let ytReady = false;
 
@@ -395,7 +398,6 @@ function onYTS(e) {
 }
 
 let progressTimer = null;
-let sleepTimerId = null;
 
 function handleTrackEnded() {
     window.OCTAVE.isPlaying = false;
@@ -415,9 +417,10 @@ window.playNextLogic = () => {
 
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         // There are more tracks in the queue - play the next one
+        window.OCTAVE.isNextTrackManual = false;
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-    } else if (window.OCTAVE.currentIndex >= window.OCTAVE.queue.length - 1) {
-        // We're at the end of the queue - try to fetch more tracks first
+    } else {
+        // We're at the end of the queue - fetch more tracks silently
         window.OCTAVE.isTransitioning = true;
         const fpPlay = document.querySelector('#fp-play i');
         if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin';
@@ -427,8 +430,6 @@ window.playNextLogic = () => {
             if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
                 window.OCTAVE.isNextTrackManual = false;
                 window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-            } else if (window.generateDiscoverMix) {
-                window.generateDiscoverMix();
             } else {
                 window.OCTAVE.isPlaying = false;
                 updatePlayIcons('fa-solid fa-play');
@@ -436,18 +437,10 @@ window.playNextLogic = () => {
             }
         }).catch(() => {
             window.OCTAVE.isTransitioning = false;
-            if (window.generateDiscoverMix) {
-                window.generateDiscoverMix();
-            } else {
-                window.OCTAVE.isPlaying = false;
-                updatePlayIcons('fa-solid fa-play');
-                clearInterval(progressTimer);
-            }
+            window.OCTAVE.isPlaying = false;
+            updatePlayIcons('fa-solid fa-play');
+            clearInterval(progressTimer);
         });
-    } else {
-        window.OCTAVE.isPlaying = false;
-        updatePlayIcons('fa-solid fa-play');
-        clearInterval(progressTimer);
     }
 };
 
@@ -458,7 +451,6 @@ function updatePlayIcons(iconClass) {
     if (fp) fp.className = iconClass;
 }
 
-// togglePlay handles YTP not-ready state gracefully
 window.togglePlay = () => {
     if (window.OCTAVE.currentIndex === -1) return;
 
