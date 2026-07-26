@@ -3,8 +3,8 @@
 // ========================================
 
 // ============================================================
-// player.js Octave Adaptive Audio Engine
-// Verified 2026 Piped API Endpoints + iFrame Fallback Guard
+// player.js Octave Audio Engine
+// Piped Stream Proxying (Bypasses Google CDN 403 & iFrame Freeze)
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -57,7 +57,7 @@ if (isBrave) {
     console.log("Octave: Brave detected -> iFrame Engine locked.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome/Standard Browser -> Native Engine with iFrame Fallback enabled.");
+    console.log("Octave: Chrome/Standard Browser -> Native Engine with Piped Proxy.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
@@ -78,9 +78,9 @@ function startSilentKeepalive() {
         keepAliveNode.loop = true;
         keepAliveNode.connect(keepAliveCtx.destination);
         keepAliveNode.start(0);
-        console.log("Octave: Silent Keepalive started.");
+        console.log("Octave: Silent Keepalive active.");
     } catch (e) {
-        console.warn("Octave: Keepalive initialization error", e);
+        console.warn("Octave: Keepalive error", e);
     }
 }
 
@@ -109,16 +109,20 @@ async function fetchPipedAudioStreamUrl(videoId) {
         const base = window.PIPED_INSTANCES[(window.pipedIdx + i) % window.PIPED_INSTANCES.length];
         try {
             const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 5000);
+            const id = setTimeout(() => controller.abort(), 6000);
             const r = await fetch(`${base}/streams/${videoId}`, { signal: controller.signal });
             clearTimeout(id);
             if (r.ok) {
                 const data = await r.json();
                 if (data && data.audioStreams && data.audioStreams.length > 0) {
                     const bestAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-                    if (bestAudio && bestAudio.url) {
-                        window.pipedIdx = (window.pipedIdx + i) % window.PIPED_INSTANCES.length;
-                        return bestAudio.url;
+                    if (bestAudio) {
+                        // PREFER proxyUrl TO PREVENT 403 CDN BLOCKS ON MOBILE CHROME
+                        const targetUrl = bestAudio.proxyUrl || bestAudio.url;
+                        if (targetUrl) {
+                            window.pipedIdx = (window.pipedIdx + i) % window.PIPED_INSTANCES.length;
+                            return targetUrl;
+                        }
                     }
                 }
             }
@@ -278,21 +282,22 @@ const tryNextStream = async (videoId) => {
     }
 
     if (!streamUrl) {
-        console.warn("Octave: Piped stream unresolvable. Falling back to iFrame.");
-        activeEngine = 'iframe';
-        playViaIframe(videoId);
+        console.warn("Octave: Stream unresolvable.");
+        updatePlayIcons('fa-solid fa-play');
+        window.OCTAVE.isPlaying = false;
+        window.OCTAVE.isTransitioning = false;
         return;
     }
 
     AUDIO.src = streamUrl;
     AUDIO.load();
-
     resumeKeepalive();
 
     AUDIO.play().catch(() => {
-        console.warn("Octave: Native audio play blocked. Falling back to iFrame.");
-        activeEngine = 'iframe';
-        playViaIframe(videoId);
+        console.warn("Octave: Native audio play rejected.");
+        updatePlayIcons('fa-solid fa-play');
+        window.OCTAVE.isPlaying = false;
+        window.OCTAVE.isTransitioning = false;
     });
 };
 
@@ -362,14 +367,15 @@ AUDIO.addEventListener('error', async () => {
         return;
     }
 
+    // Try next Piped instance on audio error
+    window.pipedIdx = (window.pipedIdx + 1) % window.PIPED_INSTANCES.length;
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     if (track && track.videoId) {
-        activeEngine = 'iframe';
-        playViaIframe(track.videoId);
+        tryNextStream(track.videoId);
     }
 });
 
-// --- YOUTUBE IFRAME ENGINE (FOR BRAVE & FALLBACK) ---
+// --- YOUTUBE IFRAME ENGINE (FOR BRAVE ONLY) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
