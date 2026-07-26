@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Audio Engine
-// Strict Engine Separation + Dynamic Fallback + MediaSession
+// Mobile Chrome Background Lock + Native Audio Session Anchor
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -46,15 +46,18 @@ window.OCTAVE = {
     currentTrackErrorRetries: 0
 };
 
-// Strict Browser Detection (Brave = iframe hardlock, Chrome = adaptive native with iframe fallback)
+// Clear stale preferences
+localStorage.removeItem('octave_engine_pref');
+
+// STRICT BROWSER SEPARATION
 const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') || /Brave/.test(navigator.userAgent);
 
 if (isBrave) {
     window.AUDIO_ENGINE = 'iframe';
-    console.log("Octave: Brave detected -> Hardlocked to iFrame Engine.");
+    console.log("Octave: Brave detected -> iFrame Engine locked.");
 } else {
     window.AUDIO_ENGINE = 'native';
-    console.log("Octave: Chrome/Standard Mobile -> Native Engine with iFrame fallback enabled.");
+    console.log("Octave: Chrome detected -> Native Engine enabled for background playback.");
 }
 
 let activeEngine = window.AUDIO_ENGINE;
@@ -281,15 +284,9 @@ const tryNextStream = (videoId) => {
         markInstanceSuccess(currentBase);
     }).catch(() => {
         markInstanceFailure(currentBase);
-        const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        if (track) {
-            activeEngine = 'iframe';
-            playViaIframe(track.videoId);
-        } else {
-            updatePlayIcons('fa-solid fa-play');
-            window.OCTAVE.isPlaying = false;
-            window.OCTAVE.isTransitioning = false;
-        }
+        updatePlayIcons('fa-solid fa-play');
+        window.OCTAVE.isPlaying = false;
+        window.OCTAVE.isTransitioning = false;
     });
 };
 
@@ -300,6 +297,7 @@ AUDIO.addEventListener('playing', () => {
     window.OCTAVE.isPlaying = true;
     updatePlayIcons('fa-solid fa-pause');
     
+    // Explicit background audio session state lock
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'playing';
     }
@@ -310,8 +308,14 @@ AUDIO.addEventListener('playing', () => {
 
 AUDIO.addEventListener('pause', () => {
     if (activeEngine !== 'native') return;
+
+    // Prevent background tab switch from triggering pause
+    if (document.hidden && window.OCTAVE.isPlaying) {
+        AUDIO.play().catch(() => {});
+        return;
+    }
+
     window.OCTAVE.isPlaying = false;
-    
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'paused';
     }
@@ -354,13 +358,22 @@ AUDIO.addEventListener('error', async () => {
         }
     }
 
-    if (track) {
-        activeEngine = 'iframe';
-        playViaIframe(track.videoId);
+    if (!window.OCTAVE.currentTrackErrorRetries) window.OCTAVE.currentTrackErrorRetries = 0;
+    window.OCTAVE.currentTrackErrorRetries++;
+
+    if (window.OCTAVE.currentTrackErrorRetries >= window.INVIDIOUS.length) {
+        window.OCTAVE.currentTrackErrorRetries = 0;
+        window.OCTAVE.isTransitioning = false;
+        updatePlayIcons('fa-solid fa-play');
+        return;
+    }
+
+    if (window.OCTAVE.currentIndex >= 0) {
+        tryNextStream(track.videoId);
     }
 });
 
-// --- YOUTUBE IFRAME ENGINE (SAFE PROMISE QUEUE) ---
+// --- YOUTUBE IFRAME ENGINE (FOR BRAVE) ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
@@ -552,8 +565,14 @@ function updateMediaSession(track) {
         ] : []
     });
 
-    navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
-    navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
+    navigator.mediaSession.setActionHandler('play', () => { 
+        if (activeEngine === 'native') AUDIO.play();
+        else window.togglePlay(); 
+    });
+    navigator.mediaSession.setActionHandler('pause', () => { 
+        if (activeEngine === 'native') AUDIO.pause();
+        else window.togglePlay(); 
+    });
     navigator.mediaSession.setActionHandler('nexttrack', () => { window.playNextLogic(); });
     navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
 
