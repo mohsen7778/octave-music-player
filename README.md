@@ -1,6 +1,6 @@
 <div align="center">
 
-# Web App fully functional use brave browser) 
+# Web App fully functional (always use brave browser) 
 
 **A fully private high performance client side music architecture running entirely in your browser with zero backend infrastructure.**
 
