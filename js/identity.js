@@ -4,22 +4,19 @@
 
 // ============================================================
 // identity.js — Octave Canonical Identity & Persistent Cache Engine
-// Maps: videoId <-> rbId <-> ISRC <-> Audio Features <-> Stream
+// FIXED: ReccoBeats Query Parameter Schema (`seeds`)
 // ============================================================
 
 window.OCTAVE_IDENTITY = {
-    // In-memory caches for high-speed synchronous lookups
     videoToRb: new Map(),     // videoId -> rbId
     rbToTrack: new Map(),     // rbId -> canonical track metadata
     rbFeatures: new Map(),    // rbId -> audioFeatures
     rbRecs: new Map(),        // rbId -> candidate rbIds array
     queryToRb: new Map(),     // search query -> rbId
     
-    // Persistent Storage Key
     STORAGE_KEY: 'octave_identity_vault_v1'
 };
 
-// --- INITIALIZATION & LOCALSTORAGE PERSISTENCE ---
 (function initIdentityEngine() {
     try {
         const stored = localStorage.getItem(window.OCTAVE_IDENTITY.STORAGE_KEY);
@@ -38,7 +35,6 @@ window.OCTAVE_IDENTITY = {
 
 window.saveIdentityCache = () => {
     try {
-        // Prune in-memory cache if it grows too large (Keep top 500 identities)
         if (window.OCTAVE_IDENTITY.rbToTrack.size > 500) {
             const keys = Array.from(window.OCTAVE_IDENTITY.rbToTrack.keys()).slice(0, 250);
             keys.forEach(k => {
@@ -54,23 +50,17 @@ window.saveIdentityCache = () => {
             queryToRb: Array.from(window.OCTAVE_IDENTITY.queryToRb.entries())
         });
         localStorage.setItem(window.OCTAVE_IDENTITY.STORAGE_KEY, serialized);
-    } catch(e) {
-        console.warn("Octave Identity: Save cache failed.", e);
-    }
+    } catch(e) {}
 };
 
-// Auto-persist identity vault periodically
 setInterval(() => {
     window.saveIdentityCache();
 }, 45000);
 
-// --- CANONICAL TRACK NORMALIZER ---
 window.getCanonicalTrack = (track) => {
     if (!track) return null;
     
-    // Check if we already have a resolved canonical identity
     let rbId = track.rbId || (track.videoId ? window.OCTAVE_IDENTITY.videoToRb.get(track.videoId) : null);
-    
     let cachedTrack = rbId ? window.OCTAVE_IDENTITY.rbToTrack.get(rbId) : null;
     let cachedFeatures = rbId ? window.OCTAVE_IDENTITY.rbFeatures.get(rbId) : null;
 
@@ -86,9 +76,6 @@ window.getCanonicalTrack = (track) => {
     };
 };
 
-// --- IDENTITY RESOLUTION APIS ---
-
-// 1. Resolve raw Track (from YT / Search / Queue) to ReccoBeats Track ID (rbId)
 window.resolveTrackToRbId = async (track) => {
     if (!track) return null;
     if (track.rbId) return track.rbId;
@@ -120,16 +107,14 @@ window.resolveTrackToRbId = async (track) => {
             if (list.length > 0) {
                 const bestMatch = list[0];
                 const rbId = bestMatch.id;
-                const isrc = bestMatch.isrc || null;
 
-                // Bind mappings
                 if (track.videoId) window.OCTAVE_IDENTITY.videoToRb.set(track.videoId, rbId);
                 window.OCTAVE_IDENTITY.queryToRb.set(queryKey, rbId);
                 
                 window.OCTAVE_IDENTITY.rbToTrack.set(rbId, {
                     rbId: rbId,
                     videoId: track.videoId || null,
-                    isrc: isrc,
+                    isrc: bestMatch.isrc || null,
                     title: bestMatch.trackTitle || track.title,
                     author: bestMatch.artistName || track.author,
                     cachedAt: Date.now()
@@ -144,7 +129,6 @@ window.resolveTrackToRbId = async (track) => {
     return null;
 };
 
-// 2. Fetch & Cache Audio Features for a Batch of rbIds (Max 40 per call)
 window.resolveAudioFeaturesBatch = async (rbIds) => {
     if (!rbIds || !Array.isArray(rbIds) || rbIds.length === 0) return {};
 
@@ -162,7 +146,6 @@ window.resolveAudioFeaturesBatch = async (rbIds) => {
 
     if (missingIds.length === 0) return resultMap;
 
-    // Batch in chunks of 40 IDs max
     const chunks = [];
     for (let i = 0; i < missingIds.length; i += 40) {
         chunks.push(missingIds.slice(i, i + 40));
@@ -205,7 +188,7 @@ window.resolveAudioFeaturesBatch = async (rbIds) => {
     return resultMap;
 };
 
-// 3. Resolve Recommendations for Seed rbIds with Cache
+// RESOLVE RECOMMENDATIONS (FIXED: seeds parameter)
 window.resolveReccoCandidates = async (seedRbIds) => {
     const validSeeds = seedRbIds.filter(Boolean).slice(0, 5);
     if (validSeeds.length === 0) return [];
@@ -216,7 +199,8 @@ window.resolveReccoCandidates = async (seedRbIds) => {
     }
 
     try {
-        const url = `https://api.reccobeats.com/v1/track/recommendation?seedTrackIds=${encodeURIComponent(validSeeds.join(','))}&size=50`;
+        // Correct ReccoBeats Parameter: seeds
+        const url = `https://api.reccobeats.com/v1/track/recommendation?seeds=${encodeURIComponent(validSeeds.join(','))}&size=40`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 6000);
         
@@ -232,7 +216,6 @@ window.resolveReccoCandidates = async (seedRbIds) => {
                 const title = item.trackTitle || item.title;
                 const author = item.artistName || (item.artists && item.artists[0] ? item.artists[0].name : '') || item.author;
                 
-                // Cache identity details
                 if (rbId && !window.OCTAVE_IDENTITY.rbToTrack.has(rbId)) {
                     window.OCTAVE_IDENTITY.rbToTrack.set(rbId, {
                         rbId: rbId,
