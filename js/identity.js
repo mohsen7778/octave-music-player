@@ -4,7 +4,7 @@
 
 // ============================================================
 // identity.js — Octave Canonical Identity & Persistent Cache Engine
-// FIXED: ReccoBeats Query Parameter Schema (`seeds`)
+// FIXED: Parameter Query Fix (`seeds` instead of `seedTrackIds`)
 // ============================================================
 
 window.OCTAVE_IDENTITY = {
@@ -188,7 +188,7 @@ window.resolveAudioFeaturesBatch = async (rbIds) => {
     return resultMap;
 };
 
-// RESOLVE RECOMMENDATIONS (FIXED: seeds parameter)
+// RESOLVE RECOMMENDATIONS (FIXED: Correct API param 'seeds')
 window.resolveReccoCandidates = async (seedRbIds) => {
     const validSeeds = seedRbIds.filter(Boolean).slice(0, 5);
     if (validSeeds.length === 0) return [];
@@ -199,7 +199,6 @@ window.resolveReccoCandidates = async (seedRbIds) => {
     }
 
     try {
-        // Correct ReccoBeats Parameter: seeds
         const url = `https://api.reccobeats.com/v1/track/recommendation?seeds=${encodeURIComponent(validSeeds.join(','))}&size=40`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 6000);
