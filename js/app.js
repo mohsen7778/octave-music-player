@@ -4,7 +4,7 @@
 
 // ============================================================
 // app.js — Octave Full Flagship Engine
-// 100% Complete File - Resilient Multi-Node Search Engine
+// Resilient Multi-Node Search Engine (Direct Native CORS)
 // ============================================================
 
 (function() {
@@ -522,95 +522,59 @@ window.sendSearchLog = async (msg) => {
     } catch(e) {}
 };
 
-// MULTI-PROVIDER SEARCH ENGINE WITH GUARANTEED FALLBACK
+// MULTI-PROVIDER SEARCH ENGINE (DIRECT NATIVE CORS)
 window.performSearch = async (query) => {
     const currentId = window.searchSessionId;
     window.sendSearchLog(`Started search for: "${query}"`);
 
-    const invidiousInstances = [
-        'https://inv.nadeko.net',
-        'https://invidious.nerdvpn.de',
-        'https://yt.chocolatemoo53.com',
-        'https://invidious.tiekoetter.com',
-        'https://inv.thepixora.com',
-        'https://invidious.drgns.space',
-        'https://yt.artemislena.eu'
+    const activeEndpoints = [
+        { type: 'piped', url: 'https://pipedapi.privacydev.net' },
+        { type: 'piped', url: 'https://pipedapi.adminforge.de' },
+        { type: 'invidious', url: 'https://yewtu.be' },
+        { type: 'invidious', url: 'https://inv.nadeko.net' },
+        { type: 'invidious', url: 'https://invidious.flokinet.to' }
     ];
 
-    const pipedInstances = [
-        'https://pipedapi.kavin.rocks',
-        'https://api.piped.projectsegfau.lt',
-        'https://pipedapi.privacydev.net',
-        'https://api.piped.vicr.1337.cx'
-    ];
-
-    // Tier 1: Try Piped Nodes
-    for (const base of pipedInstances) {
+    // Tier 1: Direct Active Instances
+    for (const ep of activeEndpoints) {
         if (currentId !== window.searchSessionId) return null;
-        const rawUrl = `${base}/search?q=${encodeURIComponent(query)}&filter=music_songs`;
-        const urlsToTry = [
-            rawUrl,
-            `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`,
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`
-        ];
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-        for (const fetchUrl of urlsToTry) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3500);
-                const r = await fetch(fetchUrl, { signal: controller.signal });
-                clearTimeout(timeoutId);
+            const fetchUrl = ep.type === 'piped'
+                ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
+                : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
 
-                if (r.ok) {
-                    const d = await r.json();
-                    if (currentId !== window.searchSessionId) return null;
-                    if (d && d.items && d.items.length > 0) {
-                        return d.items.slice(0, 15).map(item => ({
-                            videoId: item.url ? item.url.replace('/watch?v=', '') : null,
-                            title: item.title,
-                            author: item.uploaderName || item.uploader || 'Artist',
-                            thumb: item.thumbnail || ''
-                        })).filter(t => t.videoId);
-                    }
+            const r = await fetch(fetchUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (r.ok) {
+                const d = await r.json();
+                if (currentId !== window.searchSessionId) return null;
+
+                if (ep.type === 'piped' && d && d.items && d.items.length > 0) {
+                    return d.items.slice(0, 15).map(item => ({
+                        videoId: item.url ? item.url.replace('/watch?v=', '') : null,
+                        title: item.title,
+                        author: item.uploaderName || item.uploader || 'Artist',
+                        thumb: item.thumbnail || ''
+                    })).filter(t => t.videoId);
+                } else if (ep.type === 'invidious' && Array.isArray(d) && d.length > 0) {
+                    return d.filter(item => item.videoId && (!item.lengthSeconds || item.lengthSeconds < 600)).map(item => ({
+                        videoId: item.videoId,
+                        title: item.title,
+                        author: item.author,
+                        thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
+                    }));
                 }
-            } catch(e) { continue; }
+            }
+        } catch(e) {
+            continue;
         }
     }
 
-    // Tier 2: Try Invidious Nodes
-    for (const base of invidiousInstances) {
-        if (currentId !== window.searchSessionId) return null;
-        const rawUrl = `${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
-        const urlsToTry = [
-            rawUrl,
-            `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`,
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`
-        ];
-
-        for (const fetchUrl of urlsToTry) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3500);
-                const r = await fetch(fetchUrl, { signal: controller.signal });
-                clearTimeout(timeoutId);
-
-                if (r.ok) {
-                    const d = await r.json();
-                    if (currentId !== window.searchSessionId) return null;
-                    if (Array.isArray(d) && d.length > 0) {
-                        return d.filter(item => item.videoId && (!item.lengthSeconds || item.lengthSeconds < 600)).map(item => ({
-                            videoId: item.videoId,
-                            title: item.title,
-                            author: item.author,
-                            thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
-                        }));
-                    }
-                }
-            } catch(e) { continue; }
-        }
-    }
-
-    // Tier 3: Guaranteed iTunes Search API Fallback (100% uptime)
+    // Tier 2: iTunes Direct API (Native Browser CORS, 100% Guaranteed Uptime)
     try {
         const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=15`;
         const r = await fetch(itunesUrl);
@@ -618,7 +582,7 @@ window.performSearch = async (query) => {
             const d = await r.json();
             if (d && d.results && d.results.length > 0) {
                 return d.results.map(item => ({
-                    videoId: null, // Dynamically resolved on play
+                    videoId: null, // Resolves on play
                     title: item.trackName,
                     author: item.artistName,
                     thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : ''
