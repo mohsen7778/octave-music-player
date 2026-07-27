@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Universal iFrame Engine
-// Universal Instant Playback Baseline (Chrome + Brave)
+// Universal Instant Playback Baseline + Phase 2 Lifecycle Wiring
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -43,7 +43,13 @@ window.OCTAVE = {
     isDraggingProgress: false,
     isTransitioning: false, 
     nextTrackPreloaded: false,
-    currentTrackErrorRetries: 0
+    currentTrackErrorRetries: 0,
+
+    // Phase 2 Lifecycle Trackers
+    trackDuration: 0,
+    completionLogged: false,
+    earlySkipLogged: false,
+    activeCanonicalTrack: null
 };
 
 // Clear stale preference flags & hardcode baseline iframe engine for 100% instant play
@@ -51,7 +57,83 @@ localStorage.removeItem('octave_engine_pref');
 window.AUDIO_ENGINE = 'iframe';
 let activeEngine = window.AUDIO_ENGINE;
 
-console.log("Octave: Universal iFrame Engine restored. Instant playback active.");
+console.log("Octave: Universal iFrame Engine restored. Instant playback & Lifecycle Wiring active.");
+
+// --- PHASE 2 LIFECYCLE EVENT EMITTER & HOOKS ---
+
+window.onLifecycleTrackStart = async (track) => {
+    if (!track) return;
+    window.OCTAVE.completionLogged = false;
+    window.OCTAVE.earlySkipLogged = false;
+
+    // 1. Resolve Canonical Track Identity using identity.js
+    if (window.resolveTrackToRbId) {
+        const rbId = await window.resolveTrackToRbId(track);
+        if (rbId) {
+            track.rbId = rbId;
+            if (window.resolveAudioFeaturesBatch) {
+                window.resolveAudioFeaturesBatch([rbId]).then(featMap => {
+                    if (featMap[rbId]) {
+                        track.audioFeatures = featMap[rbId];
+                    }
+                });
+            }
+        }
+    }
+
+    if (window.getCanonicalTrack) {
+        window.OCTAVE.activeCanonicalTrack = window.getCanonicalTrack(track);
+    } else {
+        window.OCTAVE.activeCanonicalTrack = track;
+    }
+
+    // 2. Log Play Event to Artist Stats
+    if (window.updateArtistStats && track.author) {
+        window.updateArtistStats(track.author, 'play');
+    }
+};
+
+window.checkLifecycleCompletion = (currentTime, totalDuration) => {
+    if (!window.OCTAVE.completionLogged && totalDuration > 0) {
+        const percentPlayed = (currentTime / totalDuration) * 100;
+        
+        // Threshold: 80% played or at least 30 seconds listened
+        if (percentPlayed >= 80 || currentTime >= 30) {
+            window.OCTAVE.completionLogged = true;
+            const currentTrack = window.OCTAVE.activeCanonicalTrack || window.OCTAVE.queue[window.OCTAVE.currentIndex];
+            
+            if (currentTrack) {
+                console.log(`Octave Lifecycle: Track Completed -> "${currentTrack.title}"`);
+                
+                if (window.updateArtistStats && currentTrack.author) {
+                    window.updateArtistStats(currentTrack.author, 'complete');
+                }
+                
+                if (window.updateTasteProfile && currentTrack.audioFeatures) {
+                    window.updateTasteProfile(currentTrack.audioFeatures);
+                }
+            }
+        }
+    }
+};
+
+window.onLifecycleTrackSkip = () => {
+    const timeListened = (Date.now() - window.OCTAVE.trackStartTime) / 1000;
+    
+    // Early skip penalty triggered if skipped within first 15 seconds
+    if (timeListened < 15 && !window.OCTAVE.earlySkipLogged) {
+        window.OCTAVE.earlySkipLogged = true;
+        const currentTrack = window.OCTAVE.activeCanonicalTrack || window.OCTAVE.queue[window.OCTAVE.currentIndex];
+        
+        if (currentTrack) {
+            console.log(`Octave Lifecycle: Early Skip Penalty -> "${currentTrack.title}"`);
+            
+            if (window.updateArtistStats && currentTrack.author) {
+                window.updateArtistStats(currentTrack.author, 'skip');
+            }
+        }
+    }
+};
 
 window.initTrackStats = (videoId) => {
     if (!window.OCTAVE.playStats[videoId]) {
@@ -252,6 +334,11 @@ function handleTrackEnded() {
         window.initTrackStats(track.videoId);
         window.OCTAVE.playStats[track.videoId].completes++;
         window.saveCache();
+        
+        // Lifecycle complete event trigger
+        if (window.checkLifecycleCompletion) {
+            window.checkLifecycleCompletion(100, 100);
+        }
     }
     if (window.playNextLogic) window.playNextLogic();
 }
@@ -331,6 +418,11 @@ function startProgressTracking() {
             if (fpProg) fpProg.style.width = `${percent}%`;
             if (currTime) currTime.textContent = formatTime(current);
             if (totTime) totTime.textContent = formatTime(total);
+
+            // Trigger Phase 2 Completion Check
+            if (window.checkLifecycleCompletion) {
+                window.checkLifecycleCompletion(current, total);
+            }
         }
     }, 500);
 }
@@ -361,7 +453,10 @@ function updateMediaSession(track) {
 
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
-    navigator.mediaSession.setActionHandler('nexttrack', () => { window.playNextLogic(); });
+    navigator.mediaSession.setActionHandler('nexttrack', () => { 
+        if (window.onLifecycleTrackSkip) window.onLifecycleTrackSkip();
+        window.playNextLogic(); 
+    });
     navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
 
     try {
@@ -448,6 +543,11 @@ window.playTrackByIndex = (index) => {
 
     window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)].slice(0, 50);
     window.saveCache();
+
+    // Trigger Phase 2 Track Start Event
+    if (window.onLifecycleTrackStart) {
+        window.onLifecycleTrackStart(track);
+    }
 
     updatePlayerUI(track);
     updateMediaSession(track);
@@ -660,10 +760,14 @@ function updatePlayerUI(track) {
 }
 
 window.toggleLike = (track) => {
-    if (window.OCTAVE.liked[track.videoId]) {
-        delete window.OCTAVE.liked[track.videoId];
-    } else {
+    const isLiking = !window.OCTAVE.liked[track.videoId];
+    if (isLiking) {
         window.OCTAVE.liked[track.videoId] = track;
+        if (window.updateArtistStats && track.author) {
+            window.updateArtistStats(track.author, 'like');
+        }
+    } else {
+        delete window.OCTAVE.liked[track.videoId];
     }
     window.saveCache();
     updatePlayerUI(track);
@@ -764,6 +868,12 @@ function initPlayerDOM() {
                     window.saveCache();
                 }
             }
+            
+            // Trigger Phase 2 Skip Event
+            if (window.onLifecycleTrackSkip) {
+                window.onLifecycleTrackSkip();
+            }
+
             window.OCTAVE.isNextTrackManual = true;
             if (window.playNextLogic) window.playNextLogic();
         });
