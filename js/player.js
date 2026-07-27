@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Universal iFrame Engine
-// Universal Instant Playback Baseline + Phase 2 Lifecycle Wiring
+// Universal Instant Playback + Brave Background Keep-Alive
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -45,14 +45,12 @@ window.OCTAVE = {
     nextTrackPreloaded: false,
     currentTrackErrorRetries: 0,
 
-    // Phase 2 Lifecycle Trackers
     trackDuration: 0,
     completionLogged: false,
     earlySkipLogged: false,
     activeCanonicalTrack: null
 };
 
-// Clear stale preference flags & hardcode baseline iframe engine for 100% instant play
 localStorage.removeItem('octave_engine_pref');
 window.AUDIO_ENGINE = 'iframe';
 let activeEngine = window.AUDIO_ENGINE;
@@ -66,7 +64,6 @@ window.onLifecycleTrackStart = async (track) => {
     window.OCTAVE.completionLogged = false;
     window.OCTAVE.earlySkipLogged = false;
 
-    // 1. Resolve Canonical Track Identity using identity.js
     if (window.resolveTrackToRbId) {
         const rbId = await window.resolveTrackToRbId(track);
         if (rbId) {
@@ -87,7 +84,6 @@ window.onLifecycleTrackStart = async (track) => {
         window.OCTAVE.activeCanonicalTrack = track;
     }
 
-    // 2. Log Play Event to Artist Stats
     if (window.updateArtistStats && track.author) {
         window.updateArtistStats(track.author, 'play');
     }
@@ -97,7 +93,6 @@ window.checkLifecycleCompletion = (currentTime, totalDuration) => {
     if (!window.OCTAVE.completionLogged && totalDuration > 0) {
         const percentPlayed = (currentTime / totalDuration) * 100;
         
-        // Threshold: 80% played or at least 30 seconds listened
         if (percentPlayed >= 80 || currentTime >= 30) {
             window.OCTAVE.completionLogged = true;
             const currentTrack = window.OCTAVE.activeCanonicalTrack || window.OCTAVE.queue[window.OCTAVE.currentIndex];
@@ -110,7 +105,7 @@ window.checkLifecycleCompletion = (currentTime, totalDuration) => {
                 }
                 
                 if (window.updateTasteProfile && currentTrack.audioFeatures) {
-                    window.updateTasteProfile(currentTrack.audioFeatures);
+                    window.updateTasteProfile(currentTrack.audioFeatures, currentTrack.author);
                 }
             }
         }
@@ -120,7 +115,6 @@ window.checkLifecycleCompletion = (currentTime, totalDuration) => {
 window.onLifecycleTrackSkip = () => {
     const timeListened = (Date.now() - window.OCTAVE.trackStartTime) / 1000;
     
-    // Early skip penalty triggered if skipped within first 15 seconds
     if (timeListened < 15 && !window.OCTAVE.earlySkipLogged) {
         window.OCTAVE.earlySkipLogged = true;
         const currentTrack = window.OCTAVE.activeCanonicalTrack || window.OCTAVE.queue[window.OCTAVE.currentIndex];
@@ -233,8 +227,9 @@ window.importVault = (event) => {
     reader.readAsText(file);
 };
 
-// --- AUDIO UNLOCK ANCHOR ---
+// --- BRAVE BACKGROUND KEEP-ALIVE AUDIO ANCHOR ---
 const AUDIO = new Audio();
+AUDIO.loop = true; // Prevents background engine death in Brave
 const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
 
 let audioUnlocked = false;
@@ -243,7 +238,7 @@ function unlockAudioEngine() {
     audioUnlocked = true;
 
     AUDIO.src = SILENT_MP3;
-    AUDIO.play().then(() => { AUDIO.pause(); }).catch(() => {});
+    AUDIO.play().then(() => {}).catch(() => {});
 
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -258,7 +253,7 @@ function unlockAudioEngine() {
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
-// --- YOUTUBE IFRAME ENGINE (OFFICIAL INSTANT API) ---
+// --- YOUTUBE IFRAME ENGINE ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
 const ytReadyPromise = new Promise((resolve) => {
@@ -335,7 +330,6 @@ function handleTrackEnded() {
         window.OCTAVE.playStats[track.videoId].completes++;
         window.saveCache();
         
-        // Lifecycle complete event trigger
         if (window.checkLifecycleCompletion) {
             window.checkLifecycleCompletion(100, 100);
         }
@@ -419,7 +413,6 @@ function startProgressTracking() {
             if (currTime) currTime.textContent = formatTime(current);
             if (totTime) totTime.textContent = formatTime(total);
 
-            // Trigger Phase 2 Completion Check
             if (window.checkLifecycleCompletion) {
                 window.checkLifecycleCompletion(current, total);
             }
@@ -544,7 +537,6 @@ window.playTrackByIndex = (index) => {
     window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)].slice(0, 50);
     window.saveCache();
 
-    // Trigger Phase 2 Track Start Event
     if (window.onLifecycleTrackStart) {
         window.onLifecycleTrackStart(track);
     }
@@ -869,7 +861,6 @@ function initPlayerDOM() {
                 }
             }
             
-            // Trigger Phase 2 Skip Event
             if (window.onLifecycleTrackSkip) {
                 window.onLifecycleTrackSkip();
             }
