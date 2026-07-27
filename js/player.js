@@ -4,7 +4,7 @@
 
 // ============================================================
 // player.js Octave Universal iFrame Engine
-// Universal Instant Playback + Brave Background Keep-Alive
+// Universal Instant Playback + On-the-fly Video ID Resolution
 // ============================================================
 
 window.escapeHTML = (str) => {
@@ -57,7 +57,7 @@ let activeEngine = window.AUDIO_ENGINE;
 
 console.log("Octave: Universal iFrame Engine restored. Instant playback & Lifecycle Wiring active.");
 
-// --- PHASE 2 LIFECYCLE EVENT EMITTER & HOOKS ---
+// --- LIFECYCLE EVENT EMITTER & HOOKS ---
 
 window.onLifecycleTrackStart = async (track) => {
     if (!track) return;
@@ -125,11 +125,16 @@ window.onLifecycleTrackSkip = () => {
             if (window.updateArtistStats && currentTrack.author) {
                 window.updateArtistStats(currentTrack.author, 'skip');
             }
+
+            if (window.recordZoneOutcome && currentTrack.audioFeatures) {
+                window.recordZoneOutcome(currentTrack.audioFeatures, true);
+            }
         }
     }
 };
 
 window.initTrackStats = (videoId) => {
+    if (!videoId) return;
     if (!window.OCTAVE.playStats[videoId]) {
         window.OCTAVE.playStats[videoId] = {
             plays: 0, skips: 0, completes: 0,
@@ -229,7 +234,7 @@ window.importVault = (event) => {
 
 // --- BRAVE BACKGROUND KEEP-ALIVE AUDIO ANCHOR ---
 const AUDIO = new Audio();
-AUDIO.loop = true; // Prevents background engine death in Brave
+AUDIO.loop = true;
 const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
 
 let audioUnlocked = false;
@@ -281,7 +286,7 @@ window.onYouTubeIframeAPIReady = () => {
 
                 if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.queue.length > 0) {
                     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-                    YTP.cueVideoById({ videoId: track.videoId });
+                    if (track.videoId) YTP.cueVideoById({ videoId: track.videoId });
                 }
             },
             onStateChange: onYTS
@@ -326,8 +331,10 @@ function handleTrackEnded() {
     clearInterval(progressTimer);
     if (window.OCTAVE.currentIndex >= 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        window.initTrackStats(track.videoId);
-        window.OCTAVE.playStats[track.videoId].completes++;
+        if (track.videoId) {
+            window.initTrackStats(track.videoId);
+            if (window.OCTAVE.playStats[track.videoId]) window.OCTAVE.playStats[track.videoId].completes++;
+        }
         window.saveCache();
         
         if (window.checkLifecycleCompletion) {
@@ -483,11 +490,31 @@ function syncMediaSessionPosition() {
     }
 }
 
-window.playTrackByIndex = (index) => {
+window.playTrackByIndex = async (index) => {
     if (window.OCTAVE.isTransitioning) return; 
 
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     const track = window.OCTAVE.queue[index];
+
+    // On-the-fly resolution if track lacks a videoId (e.g. from iTunes API)
+    if (!track.videoId) {
+        updatePlayIcons('fa-solid fa-spinner fa-spin');
+        try {
+            const res = await window.performSearch(`${track.author} ${track.title} audio`);
+            if (res && res.length > 0 && res[0].videoId) {
+                track.videoId = res[0].videoId;
+                if (!track.thumb) track.thumb = res[0].thumb;
+            } else {
+                updatePlayIcons('fa-solid fa-play');
+                alert("Could not find playable stream.");
+                return;
+            }
+        } catch(e) {
+            updatePlayIcons('fa-solid fa-play');
+            alert("Stream lookup failed.");
+            return;
+        }
+    }
 
     window.OCTAVE.isTransitioning = true;
     window.OCTAVE.nextTrackPreloaded = false;
@@ -518,23 +545,27 @@ window.playTrackByIndex = (index) => {
     if (hour >= 5 && hour < 12) tod = 'morning';
     else if (hour >= 12 && hour < 17) tod = 'afternoon';
 
-    window.initTrackStats(track.videoId);
-    window.OCTAVE.playStats[track.videoId].plays++;
-    window.OCTAVE.playStats[track.videoId].lastPlayedTimeOfDay = tod;
+    if (track.videoId) {
+        window.initTrackStats(track.videoId);
+        if (window.OCTAVE.playStats[track.videoId]) {
+            window.OCTAVE.playStats[track.videoId].plays++;
+            window.OCTAVE.playStats[track.videoId].lastPlayedTimeOfDay = tod;
 
-    if (window.OCTAVE.isNextTrackManual) {
-        window.OCTAVE.playStats[track.videoId].manual++;
+            if (window.OCTAVE.isNextTrackManual) {
+                window.OCTAVE.playStats[track.videoId].manual++;
+            }
+        }
     }
 
     window.OCTAVE.trackStartTime = Date.now();
     window.OCTAVE.activeTrackViewed = false;
     window.OCTAVE.currentIndex = index;
 
-    if (!window.OCTAVE.sessionHistory.includes(track.videoId)) {
+    if (track.videoId && !window.OCTAVE.sessionHistory.includes(track.videoId)) {
         window.OCTAVE.sessionHistory.push(track.videoId);
     }
 
-    window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => t.videoId !== track.videoId)].slice(0, 50);
+    window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => (t.videoId && track.videoId && t.videoId !== track.videoId) || t.title !== track.title)].slice(0, 50);
     window.saveCache();
 
     if (window.onLifecycleTrackStart) {
@@ -552,11 +583,33 @@ window.playTrackByIndex = (index) => {
     });
 };
 
-window.playTrack = (track) => {
+window.playTrack = async (track) => {
     if (window.OCTAVE.isTransitioning) return; 
+    if (!track) return;
+
+    if (!track.videoId) {
+        updatePlayIcons('fa-solid fa-spinner fa-spin');
+        try {
+            const results = await window.performSearch(`${track.author} ${track.title} audio`);
+            if (results && results.length > 0 && results[0].videoId) {
+                track.videoId = results[0].videoId;
+                if (!track.thumb) track.thumb = results[0].thumb;
+            } else {
+                updatePlayIcons('fa-solid fa-play');
+                alert("Could not find an audio stream for this track.");
+                return;
+            }
+        } catch(e) {
+            updatePlayIcons('fa-solid fa-play');
+            alert("Stream search failed.");
+            return;
+        }
+    }
+
     window.OCTAVE.isNextTrackManual = true; 
-    window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => t.videoId !== track.videoId)];
-    const existIdx = window.OCTAVE.queue.findIndex(t => t.videoId === track.videoId);
+    window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => (t.videoId && track.videoId && t.videoId !== track.videoId) || t.title !== track.title)];
+    
+    const existIdx = window.OCTAVE.queue.findIndex(t => (t.videoId && track.videoId && t.videoId === track.videoId) || t.title === track.title);
     if (existIdx >= 0) {
         window.playTrackByIndex(existIdx);
     } else {
@@ -738,7 +791,7 @@ function updatePlayerUI(track) {
 
     window.applyLiquidShadow(thumb);
 
-    const isLiked = !!window.OCTAVE.liked[track.videoId];
+    const isLiked = track.videoId ? !!window.OCTAVE.liked[track.videoId] : false;
     const likeHTML = isLiked ? '<i class="fa-solid fa-heart" style="color:var(--accent);"></i>' : '<i class="fa-regular fa-heart"></i>';
     if (els.mL) els.mL.innerHTML = likeHTML;
     if (els.fL) els.fL.innerHTML = likeHTML;
@@ -752,6 +805,7 @@ function updatePlayerUI(track) {
 }
 
 window.toggleLike = (track) => {
+    if (!track.videoId) return;
     const isLiking = !window.OCTAVE.liked[track.videoId];
     if (isLiking) {
         window.OCTAVE.liked[track.videoId] = track;
@@ -833,8 +887,10 @@ function initPlayerDOM() {
                 document.getElementById('full-player')?.classList.add('active');
                 if(window.OCTAVE.currentIndex >= 0 && !window.OCTAVE.activeTrackViewed) {
                     const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
-                    window.initTrackStats(id);
-                    window.OCTAVE.playStats[id].activeViews++;
+                    if (id) {
+                        window.initTrackStats(id);
+                        if (window.OCTAVE.playStats[id]) window.OCTAVE.playStats[id].activeViews++;
+                    }
                     window.OCTAVE.activeTrackViewed = true;
                     window.saveCache();
                 }
@@ -855,8 +911,10 @@ function initPlayerDOM() {
                 const timeListened = Date.now() - window.OCTAVE.trackStartTime;
                 if (timeListened < 15000) { 
                     const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
-                    window.initTrackStats(id);
-                    window.OCTAVE.playStats[id].skips++;
+                    if (id) {
+                        window.initTrackStats(id);
+                        if (window.OCTAVE.playStats[id]) window.OCTAVE.playStats[id].skips++;
+                    }
                     window.saveCache();
                 }
             }
