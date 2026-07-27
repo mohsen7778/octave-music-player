@@ -4,7 +4,7 @@
 
 // ============================================================
 // algorithm.js — Octave 10/10 AI Recommendation Engine
-// FIXED: Direct videoId Session Exclusion & Recency Penalty
+// FIXED: Strictly Prevents Replaying Recent Tracks & Next Queue Batching
 // ============================================================
 
 if (!window.escapeHTML) {
@@ -229,7 +229,6 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         // 4. Like & Play Stats
         if (Object.values(liked).some(l => (l.rbId && l.rbId === cand.rbId) || (l.videoId && l.videoId === cand.videoId) || l.title === cand.title)) score += 25;
 
-        // FIXED: PlayStats lookup via direct videoId or title matching
         const statEntry = (cand.videoId && playStats[cand.videoId]) || Object.values(playStats).find(st => st.title === cand.title);
         if (statEntry) {
             score += Math.min(15, (statEntry.completes || 0) * 4);
@@ -246,14 +245,19 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         const recentArtistCount = queue.slice(-3).filter(q => q.author && q.author.includes(cleanArtist)).length;
         if (recentArtistCount > 0) score -= (recentArtistCount * 15);
 
-        // Memory Decay / Recency Penalty
-        const recentIdx = recentPlayed.findIndex(r => (r.videoId && r.videoId === cand.videoId) || (r.rbId && r.rbId === cand.rbId) || r.title === cand.title);
-        if (recentIdx === 0) score -= 50;
-        else if (recentIdx > 0 && recentIdx < 5) score -= 30;
+        // Heavy Penalty for Recently Played Tracks
+        const cleanTitleLower = cand.title.toLowerCase().trim();
+        const recentIdx = recentPlayed.findIndex(r => 
+            (r.videoId && r.videoId === cand.videoId) || 
+            (r.rbId && r.rbId === cand.rbId) || 
+            (r.title && r.title.toLowerCase().trim() === cleanTitleLower)
+        );
+        if (recentIdx === 0) score -= 100;
+        else if (recentIdx > 0 && recentIdx < 10) score -= 60;
 
-        // FIXED: Session Exclusion — Strictly block tracks played in current session or active queue
+        // SESSION DUP EXCLUSION: Strictly block tracks in active session or queue
         const inSessionHistory = sessionHistory.some(sId => sId === cand.videoId || (playStats[sId] && playStats[sId].title === cand.title));
-        const inActiveQueue = queue.some(q => q.videoId === cand.videoId || q.title === cand.title);
+        const inActiveQueue = queue.some(q => q.videoId === cand.videoId || (q.title && q.title.toLowerCase().trim() === cleanTitleLower));
         if (inSessionHistory || inActiveQueue) continue;
 
         if (score >= -10) {
@@ -312,6 +316,44 @@ window.fetchAutoDjBatch = async () => {
             candidates = await window.resolveReccoCandidates(seedRbIds);
         }
 
+        // Secondary Fallback if ReccoBeats fails
+        if (candidates.length < 5) {
+            for (const seed of seedSet) {
+                if (!seed.videoId) continue;
+                for (let i = 0; i < window.INVIDIOUS.length; i++) {
+                    const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+                    const rawUrl = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
+                    const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
+
+                    let fetched = false;
+                    for (const fetchUrl of urlsToTry) {
+                        try {
+                            const controller = new AbortController();
+                            const id = setTimeout(() => controller.abort(), 4000);
+                            const r = await fetch(fetchUrl, { signal: controller.signal });
+                            clearTimeout(id);
+                            if (r.ok) {
+                                const d = await r.json();
+                                if (d.recommendedVideos && d.recommendedVideos.length > 0) {
+                                    d.recommendedVideos.forEach(v => {
+                                        candidates.push({
+                                            videoId: v.videoId,
+                                            title: v.title,
+                                            author: v.author,
+                                            durationMs: (v.lengthSeconds || 0) * 1000
+                                        });
+                                    });
+                                    fetched = true;
+                                    break;
+                                }
+                            }
+                        } catch (e) { continue; }
+                    }
+                    if (fetched) break;
+                }
+            }
+        }
+
         const rankedCandidates = await runCandidateTournament(candidates, currentTrack, currentAudioFeatures);
         const resolvedWinners = [];
 
@@ -332,7 +374,7 @@ window.fetchAutoDjBatch = async () => {
         }
 
         if (resolvedWinners.length > 0 && window.OCTAVE && Array.isArray(window.OCTAVE.queue)) {
-            const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => q.videoId === w.videoId || q.title === w.title));
+            const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => q.videoId === w.videoId || (q.title && q.title.toLowerCase().trim() === w.title.toLowerCase().trim())));
             window.OCTAVE.queue.push(...filteredWinners.map(w => ({
                 videoId: w.videoId,
                 rbId: w.rbId || null,
