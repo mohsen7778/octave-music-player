@@ -4,7 +4,7 @@
 
 // ============================================================
 // algorithm.js — Octave 10/10 AI Recommendation & Scoring Engine
-// Phase 4: Lifetime Taste Vector + Adaptive Weight Learning + Tournament
+// Phase 5: Transition Engine (DJ Flow + Harmonic Key Matching)
 // ============================================================
 
 if (!window.escapeHTML) {
@@ -49,7 +49,7 @@ if (window.OCTAVE) {
         window.OCTAVE.sessionVector = null;
     }
 
-    // Phase 4: Dynamic Adaptive Feature Weights
+    // Dynamic Adaptive Feature Weights
     if (!window.OCTAVE.userWeights) {
         window.OCTAVE.userWeights = {
             energy: 0.30,
@@ -61,20 +61,77 @@ if (window.OCTAVE) {
 }
 
 // ============================================================
-// 1. ADAPTIVE WEIGHT LEARNING & TASTE VECTOR ENGINE
+// 1. PHASE 5: TRANSITION ENGINE & HARMONIC COMPATIBILITY
+// ============================================================
+
+// Calculate Camelot Wheel / Circle of Fifths Key Distance
+function computeHarmonicCompatibility(keyA, modeA, keyB, modeB) {
+    if (keyA === undefined || keyB === undefined || keyA < 0 || keyB < 0) return 0;
+
+    // Pitch class distance on Circle of Fifths
+    // Multiply by 7 mod 12 to map chromatic keys to Circle of Fifths positions
+    const posA = (keyA * 7) % 12;
+    const posB = (keyB * 7) % 12;
+    const circleDist = Math.min(Math.abs(posA - posB), 12 - Math.abs(posA - posB));
+
+    // Perfect Match (Same Key & Mode)
+    if (keyA === keyB && modeA === modeB) return 15;
+
+    // Relative Major/Minor (Same Key, Different Mode)
+    if (keyA === keyB && modeA !== modeB) return 10;
+
+    // Adjacent Key on Circle of Fifths (1 Step Away)
+    if (circleDist === 1 && modeA === modeB) return 8;
+
+    // Distant / Jarring Key Change
+    if (circleDist >= 4) return -10;
+
+    return 0;
+}
+
+// Calculate Transition Flow Penalty/Boost relative to Current Track
+function computeTransitionFlowScore(currentFeat, candFeat) {
+    if (!currentFeat || !candFeat) return 0;
+
+    let flowScore = 0;
+
+    // 1. Tempo Flow Delta
+    const tempoA = currentFeat.tempo || 120;
+    const tempoB = candFeat.tempo || 120;
+    const tempoDelta = Math.abs(tempoA - tempoB);
+
+    if (tempoDelta <= 10) flowScore += 10;        // Smooth BPM progression
+    else if (tempoDelta > 35) flowScore -= 15;    // Jarring BPM jump
+    else if (tempoDelta > 50) flowScore -= 25;    // Heavy BPM clash
+
+    // 2. Energy Flow Delta
+    const energyA = currentFeat.energy || 0.5;
+    const energyB = candFeat.energy || 0.5;
+    const energyDelta = Math.abs(energyA - energyB);
+
+    if (energyDelta <= 0.15) flowScore += 10;     // Consistent mood
+    else if (energyDelta >= 0.45) flowScore -= 20; // Jarring energy jump
+
+    // 3. Harmonic Key Compatibility
+    const harmonicBoost = computeHarmonicCompatibility(currentFeat.key, currentFeat.mode, candFeat.key, candFeat.mode);
+    flowScore += harmonicBoost;
+
+    return flowScore;
+}
+
+// ============================================================
+// 2. ADAPTIVE WEIGHT LEARNING & TASTE VECTOR ENGINE
 // ============================================================
 
 window.updateAdaptiveWeights = (audioFeatures, isSkip) => {
     if (!audioFeatures || !window.OCTAVE || !window.OCTAVE.userWeights) return;
     const w = window.OCTAVE.userWeights;
-    const lr = 0.02; // Learning rate for weight tuning
+    const lr = 0.02;
 
-    // If user skips a track with extreme traits, adjust weights to avoid similar profile
     if (isSkip) {
         if ((audioFeatures.energy || 0.5) > 0.7) w.energy = Math.max(0.1, w.energy - lr);
         if ((audioFeatures.tempo || 120) > 130) w.tempo = Math.max(0.1, w.tempo - lr);
     } else {
-        // Successful completion reinforces feature sensitivity
         w.energy = Math.min(0.45, w.energy + (lr * 0.5));
         w.valence = Math.min(0.45, w.valence + (lr * 0.5));
     }
@@ -85,7 +142,7 @@ window.updateAdaptiveWeights = (audioFeatures, isSkip) => {
 window.updateSessionVector = (audioFeatures) => {
     if (!audioFeatures || !window.OCTAVE) return;
 
-    const alpha = 0.35; // Smoothing factor (35% weight to newest track)
+    const alpha = 0.35;
 
     if (!window.OCTAVE.sessionVector) {
         window.OCTAVE.sessionVector = {
@@ -94,7 +151,9 @@ window.updateSessionVector = (audioFeatures) => {
             danceability: audioFeatures.danceability || 0.5,
             tempo: audioFeatures.tempo || 120,
             acousticness: audioFeatures.acousticness || 0.5,
-            instrumentalness: audioFeatures.instrumentalness || 0.0
+            instrumentalness: audioFeatures.instrumentalness || 0.0,
+            key: audioFeatures.key ?? 0,
+            mode: audioFeatures.mode ?? 1
         };
     } else {
         const sv = window.OCTAVE.sessionVector;
@@ -104,6 +163,8 @@ window.updateSessionVector = (audioFeatures) => {
         sv.tempo = (alpha * (audioFeatures.tempo || 120)) + ((1 - alpha) * sv.tempo);
         sv.acousticness = (alpha * (audioFeatures.acousticness || 0.5)) + ((1 - alpha) * sv.acousticness);
         sv.instrumentalness = (alpha * (audioFeatures.instrumentalness || 0.0)) + ((1 - alpha) * sv.instrumentalness);
+        sv.key = audioFeatures.key ?? sv.key;
+        sv.mode = audioFeatures.mode ?? sv.mode;
     }
 };
 
@@ -127,13 +188,9 @@ window.updateArtistStats = (artistName, action) => {
 window.updateTasteProfile = (audioFeatures) => {
     if (!audioFeatures || !window.OCTAVE || !window.OCTAVE.tasteProfile) return;
 
-    // 1. Update Active Session Vector
     window.updateSessionVector(audioFeatures);
-
-    // 2. Tune Adaptive Weights (Positive Completion)
     window.updateAdaptiveWeights(audioFeatures, false);
 
-    // 3. Update Lifetime Taste Profile (Moving Average)
     const tp = window.OCTAVE.tasteProfile;
     const n = tp.totalCompleted || 0;
 
@@ -149,7 +206,7 @@ window.updateTasteProfile = (audioFeatures) => {
 };
 
 // ============================================================
-// 2. VECTOR DISTANCE & ADAPTIVE WEIGHTING
+// 3. VECTOR DISTANCE & BLENDED TARGET
 // ============================================================
 
 function computeAudioDistance(featA, featB) {
@@ -164,9 +221,8 @@ function computeAudioDistance(featA, featB) {
     const dDance = Math.abs((featA.danceability || 0.5) - (featB.danceability || 0.5));
     const dTempo = Math.min(1, Math.abs((featA.tempo || 120) - (featB.tempo || 120)) / 60);
 
-    // Apply Dynamic Weights
     const weightedDistance = (dEnergy * w.energy) + (dValence * w.valence) + (dDance * w.danceability) + (dTempo * w.tempo);
-    return Math.max(0, 1 - weightedDistance); // 0 (dissimilar) to 1 (identical)
+    return Math.max(0, 1 - weightedDistance);
 }
 
 function computeBlendedTargetVector() {
@@ -174,9 +230,8 @@ function computeBlendedTargetVector() {
     const sv = octave.sessionVector;
     const tp = octave.tasteProfile;
 
-    if (!sv) return tp; // Fallback to lifetime if session is new
+    if (!sv) return tp;
 
-    // Phase 4 Blend: 70% Active Session + 30% Lifetime Profile
     return {
         energy: (0.70 * sv.energy) + (0.30 * tp.energy),
         valence: (0.70 * sv.valence) + (0.30 * tp.valence),
@@ -211,7 +266,7 @@ function evaluateNonMusicConfidence(title, author, durationMs) {
 }
 
 // ============================================================
-// 3. CANDIDATE TOURNAMENT (Blended Target + Adaptive Weights)
+// 4. CANDIDATE TOURNAMENT (Blended Target + Transition Matrix)
 // ============================================================
 
 async function runCandidateTournament(candidates, currentTrack, currentAudioFeatures) {
@@ -239,7 +294,6 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
     const scoredCandidates = [];
 
     for (const cand of candidates) {
-        // Quality Confidence Check
         const confidence = evaluateNonMusicConfidence(cand.title, cand.author, cand.durationMs);
         if (confidence < 50) continue;
 
@@ -255,11 +309,17 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
             score += (trackSim * 25);
         }
 
-        // 2. Canonical Identity Matching
+        // 2. PHASE 5: DJ Transition Flow & Harmonic Compatibility Score (±25)
+        if (candFeat && currentAudioFeatures) {
+            const transitionScore = computeTransitionFlowScore(currentAudioFeatures, candFeat);
+            score += transitionScore;
+        }
+
+        // 3. Canonical Identity Matching
         const isLiked = Object.values(liked).some(l => (l.rbId && l.rbId === cand.rbId) || l.title === cand.title);
         if (isLiked) score += 25;
 
-        // 3. User History & Time-of-Day Match
+        // 4. User History & Time-of-Day Match
         const matchedStatKey = Object.keys(playStats).find(k => (playStats[k] && playStats[k].rbId === cand.rbId) || playStats[k].title === cand.title);
         if (matchedStatKey) {
             const st = playStats[matchedStatKey];
@@ -268,7 +328,7 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
             if (st.lastPlayedTimeOfDay === currentTod) score += 5;
         }
 
-        // 4. Artist Affinity & Fatigue
+        // 5. Artist Affinity & Fatigue
         const cleanArtist = (cand.author || '').replace(/ - Topic$/i, '').trim();
         if (artistStats[cleanArtist]) {
             const aSt = artistStats[cleanArtist];
@@ -280,18 +340,18 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         const recentArtistCount = queue.slice(-3).filter(q => q.author && q.author.includes(cleanArtist)).length;
         if (recentArtistCount > 0) score -= (recentArtistCount * 15);
 
-        // 5. Memory Decay (Recency Penalty)
+        // 6. Memory Decay (Recency Penalty)
         const recentIdx = recentPlayed.findIndex(r => (r.rbId && r.rbId === cand.rbId) || r.title === cand.title);
         if (recentIdx === 0) score -= 40;
         else if (recentIdx > 0 && recentIdx < 5) score -= 20;
         else if (recentIdx >= 5 && recentIdx < 15) score -= 10;
 
-        // 6. Session Exclusion
+        // 7. Session Exclusion
         if (sessionHistory.some(sId => (playStats[sId] && playStats[sId].rbId === cand.rbId) || (playStats[sId] && playStats[sId].title === cand.title))) {
             continue;
         }
 
-        // 7. Popularity Weight (±5)
+        // 8. Popularity Weight (±5)
         if (cand.popularity) {
             score += ((cand.popularity - 50) / 10);
         }
@@ -304,7 +364,7 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
 }
 
 // ============================================================
-// 4. MAIN AUTO-DJ ENGINE WITH IDENTITY LAYER
+// 5. MAIN AUTO-DJ ENGINE WITH IDENTITY LAYER
 // ============================================================
 
 window.isFetchingBatch = false;
@@ -401,7 +461,7 @@ window.fetchAutoDjBatch = async () => {
             }
         }
 
-        // Step E: CANDIDATE TOURNAMENT
+        // Step E: CANDIDATE TOURNAMENT WITH DJ TRANSITION MATRIX
         const rankedCandidates = await runCandidateTournament(candidates, currentTrack, currentAudioFeatures);
 
         // Step F: Resolve Winners to Playable YouTube Streams
@@ -433,7 +493,7 @@ window.fetchAutoDjBatch = async () => {
                 thumb: w.videoId ? `https://i.ytimg.com/vi/${w.videoId}/hqdefault.jpg` : (w.thumb || '')
             })));
             if (typeof window.saveCache === 'function') window.saveCache();
-            console.log(`Octave Alg Engine: Queued ${filteredWinners.length} target-blended tracks.`);
+            console.log(`Octave Alg Engine: Queued ${filteredWinners.length} harmonically transitioned tracks.`);
         }
 
     } catch (e) {
@@ -475,7 +535,7 @@ window.generateDiscoverMix = async () => {
             <div style="padding: 60px 20px; text-align:center;">
                 <i class="fa-solid fa-wand-magic-sparkles fa-bounce" style="font-size: 40px; color: var(--accent); margin-bottom: 20px;"></i>
                 <h2>Brewing your mix...</h2>
-                <p style="color:var(--text-secondary);font-size:14px;margin-top:10px;">Running Candidate Tournament via Adaptive Weight Matrix.</p>
+                <p style="color:var(--text-secondary);font-size:14px;margin-top:10px;">Running Candidate Tournament via DJ Transition & Harmonic Engine.</p>
             </div>
         `;
     }
