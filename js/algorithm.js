@@ -3,9 +3,8 @@
 // ========================================
 
 // ============================================================
-// algorithm.js — Octave 10/10 AI Recommendation Engine (FINAL)
-// Integrated: Identity + Session Vector + DJ Flow + Taste Graph
-// Fixed: Apple RSS v2 Endpoint & Fresh-User Recommendation Fallbacks
+// algorithm.js — Octave 10/10 AI Recommendation Engine
+// FIXED: Direct videoId Session Exclusion & Recency Penalty
 // ============================================================
 
 if (!window.escapeHTML) {
@@ -76,7 +75,7 @@ function computeTransitionFlowScore(currentFeat, candFeat) {
     return flowScore;
 }
 
-// --- TASTE & SESSION UPDATES WITH TASTE GRAPH REINFORCEMENT ---
+// --- TASTE & SESSION UPDATES ---
 window.updateAdaptiveWeights = (audioFeatures, isSkip) => {
     if (!audioFeatures || !window.OCTAVE || !window.OCTAVE.userWeights) return;
     const w = window.OCTAVE.userWeights;
@@ -228,7 +227,14 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         }
 
         // 4. Like & Play Stats
-        if (Object.values(liked).some(l => (l.rbId && l.rbId === cand.rbId) || l.title === cand.title)) score += 25;
+        if (Object.values(liked).some(l => (l.rbId && l.rbId === cand.rbId) || (l.videoId && l.videoId === cand.videoId) || l.title === cand.title)) score += 25;
+
+        // FIXED: PlayStats lookup via direct videoId or title matching
+        const statEntry = (cand.videoId && playStats[cand.videoId]) || Object.values(playStats).find(st => st.title === cand.title);
+        if (statEntry) {
+            score += Math.min(15, (statEntry.completes || 0) * 4);
+            score -= Math.min(30, (statEntry.skips || 0) * 10);
+        }
 
         const cleanArtist = (cand.author || '').replace(/ - Topic$/i, '').trim();
         if (artistStats[cleanArtist]) {
@@ -240,13 +246,15 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         const recentArtistCount = queue.slice(-3).filter(q => q.author && q.author.includes(cleanArtist)).length;
         if (recentArtistCount > 0) score -= (recentArtistCount * 15);
 
-        // Memory Decay
-        const recentIdx = recentPlayed.findIndex(r => (r.rbId && r.rbId === cand.rbId) || r.title === cand.title);
-        if (recentIdx === 0) score -= 40;
-        else if (recentIdx > 0 && recentIdx < 5) score -= 20;
+        // Memory Decay / Recency Penalty
+        const recentIdx = recentPlayed.findIndex(r => (r.videoId && r.videoId === cand.videoId) || (r.rbId && r.rbId === cand.rbId) || r.title === cand.title);
+        if (recentIdx === 0) score -= 50;
+        else if (recentIdx > 0 && recentIdx < 5) score -= 30;
 
-        // Session Exclusion
-        if (sessionHistory.some(sId => (playStats[sId] && playStats[sId].rbId === cand.rbId) || (playStats[sId] && playStats[sId].title === cand.title))) continue;
+        // FIXED: Session Exclusion — Strictly block tracks played in current session or active queue
+        const inSessionHistory = sessionHistory.some(sId => sId === cand.videoId || (playStats[sId] && playStats[sId].title === cand.title));
+        const inActiveQueue = queue.some(q => q.videoId === cand.videoId || q.title === cand.title);
+        if (inSessionHistory || inActiveQueue) continue;
 
         if (score >= -10) {
             scoredCandidates.push({ candidate: cand, score, isUnplayedArtist: !artistStats[cleanArtist] });
@@ -324,7 +332,7 @@ window.fetchAutoDjBatch = async () => {
         }
 
         if (resolvedWinners.length > 0 && window.OCTAVE && Array.isArray(window.OCTAVE.queue)) {
-            const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => q.videoId === w.videoId));
+            const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => q.videoId === w.videoId || q.title === w.title));
             window.OCTAVE.queue.push(...filteredWinners.map(w => ({
                 videoId: w.videoId,
                 rbId: w.rbId || null,
@@ -385,7 +393,6 @@ window.fetchDailyRecommendations = async () => {
         if (rbId) candidateList = await window.resolveReccoCandidates([rbId]);
     }
 
-    // Fallback if candidateList is empty (fresh user or ReccoBeats lookup timeout)
     if (candidateList.length === 0) {
         for (let i = 0; i < window.INVIDIOUS.length; i++) {
             const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
@@ -467,7 +474,6 @@ window.fetchTrendingMusic = async () => {
         }
     }
 
-    // Attempt 1: Modern Apple v2 Marketing RSS Feed
     try {
         const r = await fetch(`https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json?_t=${Date.now()}`, { cache: 'no-store' });
         if (r.ok) {
@@ -495,7 +501,6 @@ window.fetchTrendingMusic = async () => {
         }
     } catch(e) {}
 
-    // Attempt 2: Invidious Global Popular Category Fallback
     try {
         for (let i = 0; i < window.INVIDIOUS.length; i++) {
             const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
