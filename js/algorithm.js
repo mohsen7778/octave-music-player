@@ -4,7 +4,7 @@
 
 // ============================================================
 // algorithm.js — Octave 10/10 AI Recommendation & Scoring Engine
-// Phase 3: Session Vector (EMA) + Identity Cache + Tournament Ranking
+// Phase 4: Lifetime Taste Vector + Adaptive Weight Learning + Tournament
 // ============================================================
 
 if (!window.escapeHTML) {
@@ -34,6 +34,8 @@ if (typeof window.invIdx === 'undefined') {
 // Initialize state structures inside OCTAVE context
 if (window.OCTAVE) {
     if (!window.OCTAVE.artistStats) window.OCTAVE.artistStats = {};
+    
+    // Lifetime Taste Profile
     if (!window.OCTAVE.tasteProfile) {
         window.OCTAVE.tasteProfile = {
             energy: 0.5, valence: 0.5, danceability: 0.5,
@@ -41,15 +43,44 @@ if (window.OCTAVE) {
             totalCompleted: 0
         };
     }
-    // NEW Phase 3: Active Session Vector
+    
+    // Session Vector (EMA)
     if (!window.OCTAVE.sessionVector) {
-        window.OCTAVE.sessionVector = null; // Instantiated on first track completion
+        window.OCTAVE.sessionVector = null;
+    }
+
+    // Phase 4: Dynamic Adaptive Feature Weights
+    if (!window.OCTAVE.userWeights) {
+        window.OCTAVE.userWeights = {
+            energy: 0.30,
+            valence: 0.30,
+            danceability: 0.20,
+            tempo: 0.20
+        };
     }
 }
 
 // ============================================================
-// 1. SESSION VECTOR (EMA) & TASTE PROFILE ENGINE
+// 1. ADAPTIVE WEIGHT LEARNING & TASTE VECTOR ENGINE
 // ============================================================
+
+window.updateAdaptiveWeights = (audioFeatures, isSkip) => {
+    if (!audioFeatures || !window.OCTAVE || !window.OCTAVE.userWeights) return;
+    const w = window.OCTAVE.userWeights;
+    const lr = 0.02; // Learning rate for weight tuning
+
+    // If user skips a track with extreme traits, adjust weights to avoid similar profile
+    if (isSkip) {
+        if ((audioFeatures.energy || 0.5) > 0.7) w.energy = Math.max(0.1, w.energy - lr);
+        if ((audioFeatures.tempo || 120) > 130) w.tempo = Math.max(0.1, w.tempo - lr);
+    } else {
+        // Successful completion reinforces feature sensitivity
+        w.energy = Math.min(0.45, w.energy + (lr * 0.5));
+        w.valence = Math.min(0.45, w.valence + (lr * 0.5));
+    }
+
+    if (typeof window.saveCache === 'function') window.saveCache();
+};
 
 window.updateSessionVector = (audioFeatures) => {
     if (!audioFeatures || !window.OCTAVE) return;
@@ -57,7 +88,6 @@ window.updateSessionVector = (audioFeatures) => {
     const alpha = 0.35; // Smoothing factor (35% weight to newest track)
 
     if (!window.OCTAVE.sessionVector) {
-        // Initialize session vector with first completed track
         window.OCTAVE.sessionVector = {
             energy: audioFeatures.energy || 0.5,
             valence: audioFeatures.valence || 0.5,
@@ -75,8 +105,6 @@ window.updateSessionVector = (audioFeatures) => {
         sv.acousticness = (alpha * (audioFeatures.acousticness || 0.5)) + ((1 - alpha) * sv.acousticness);
         sv.instrumentalness = (alpha * (audioFeatures.instrumentalness || 0.0)) + ((1 - alpha) * sv.instrumentalness);
     }
-
-    console.log("Octave Session Vector Updated (EMA):", window.OCTAVE.sessionVector);
 };
 
 window.updateArtistStats = (artistName, action) => {
@@ -99,10 +127,13 @@ window.updateArtistStats = (artistName, action) => {
 window.updateTasteProfile = (audioFeatures) => {
     if (!audioFeatures || !window.OCTAVE || !window.OCTAVE.tasteProfile) return;
 
-    // 1. Update Session Vector
+    // 1. Update Active Session Vector
     window.updateSessionVector(audioFeatures);
 
-    // 2. Update Lifetime Taste Profile (Moving Average)
+    // 2. Tune Adaptive Weights (Positive Completion)
+    window.updateAdaptiveWeights(audioFeatures, false);
+
+    // 3. Update Lifetime Taste Profile (Moving Average)
     const tp = window.OCTAVE.tasteProfile;
     const n = tp.totalCompleted || 0;
 
@@ -118,19 +149,42 @@ window.updateTasteProfile = (audioFeatures) => {
 };
 
 // ============================================================
-// 2. VECTOR DISTANCE & CONFIDENCE EVALUATION
+// 2. VECTOR DISTANCE & ADAPTIVE WEIGHTING
 // ============================================================
 
 function computeAudioDistance(featA, featB) {
     if (!featA || !featB) return 0.5;
+
+    const w = (window.OCTAVE && window.OCTAVE.userWeights) 
+        ? window.OCTAVE.userWeights 
+        : { energy: 0.30, valence: 0.30, danceability: 0.20, tempo: 0.20 };
 
     const dEnergy = Math.abs((featA.energy || 0.5) - (featB.energy || 0.5));
     const dValence = Math.abs((featA.valence || 0.5) - (featB.valence || 0.5));
     const dDance = Math.abs((featA.danceability || 0.5) - (featB.danceability || 0.5));
     const dTempo = Math.min(1, Math.abs((featA.tempo || 120) - (featB.tempo || 120)) / 60);
 
-    const weightedDistance = (dEnergy * 0.3) + (dValence * 0.3) + (dDance * 0.2) + (dTempo * 0.2);
+    // Apply Dynamic Weights
+    const weightedDistance = (dEnergy * w.energy) + (dValence * w.valence) + (dDance * w.danceability) + (dTempo * w.tempo);
     return Math.max(0, 1 - weightedDistance); // 0 (dissimilar) to 1 (identical)
+}
+
+function computeBlendedTargetVector() {
+    const octave = window.OCTAVE || {};
+    const sv = octave.sessionVector;
+    const tp = octave.tasteProfile;
+
+    if (!sv) return tp; // Fallback to lifetime if session is new
+
+    // Phase 4 Blend: 70% Active Session + 30% Lifetime Profile
+    return {
+        energy: (0.70 * sv.energy) + (0.30 * tp.energy),
+        valence: (0.70 * sv.valence) + (0.30 * tp.valence),
+        danceability: (0.70 * sv.danceability) + (0.30 * tp.danceability),
+        tempo: (0.70 * sv.tempo) + (0.30 * tp.tempo),
+        acousticness: (0.70 * sv.acousticness) + (0.30 * tp.acousticness),
+        instrumentalness: (0.70 * sv.instrumentalness) + (0.30 * tp.instrumentalness)
+    };
 }
 
 function evaluateNonMusicConfidence(title, author, durationMs) {
@@ -157,7 +211,7 @@ function evaluateNonMusicConfidence(title, author, durationMs) {
 }
 
 // ============================================================
-// 3. CANDIDATE TOURNAMENT (Session Vector + Identity Matching)
+// 3. CANDIDATE TOURNAMENT (Blended Target + Adaptive Weights)
 // ============================================================
 
 async function runCandidateTournament(candidates, currentTrack, currentAudioFeatures) {
@@ -167,11 +221,11 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
     const playStats = octave.playStats || {};
     const artistStats = octave.artistStats || {};
     const liked = octave.liked || {};
-    const sessionVector = octave.sessionVector || null;
-    const taste = octave.tasteProfile || {};
     const recentPlayed = octave.recentPlayed || [];
     const sessionHistory = octave.sessionHistory || [];
     const queue = octave.queue || [];
+
+    const targetVector = computeBlendedTargetVector();
 
     const hour = new Date().getHours();
     const currentTod = hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 17 ? 'afternoon' : 'night';
@@ -192,19 +246,16 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         let score = 0;
         const candFeat = candidateFeaturesMap[cand.rbId];
 
-        // 1. Session Vector Similarity (+35 max) — Primary Signal
-        if (candFeat && sessionVector) {
-            const sessionSim = computeAudioDistance(sessionVector, candFeat);
-            score += (sessionSim * 35);
+        // 1. Blended Target Similarity (+35 max)
+        if (candFeat && targetVector) {
+            const targetSim = computeAudioDistance(targetVector, candFeat);
+            score += (targetSim * 35);
         } else if (candFeat && currentAudioFeatures) {
             const trackSim = computeAudioDistance(currentAudioFeatures, candFeat);
             score += (trackSim * 25);
-        } else if (candFeat) {
-            const tasteSim = computeAudioDistance(taste, candFeat);
-            score += (tasteSim * 15);
         }
 
-        // 2. Canonical Identity Matching (rbId or Title Check)
+        // 2. Canonical Identity Matching
         const isLiked = Object.values(liked).some(l => (l.rbId && l.rbId === cand.rbId) || l.title === cand.title);
         if (isLiked) score += 25;
 
@@ -271,7 +322,7 @@ window.fetchAutoDjBatch = async () => {
 
         const currentTrack = currentIndex >= 0 ? queue[currentIndex] : (recentPlayed[0] || null);
 
-        // Step A: Build Multi-Seed Set (Current + Best Liked + Recent Played)
+        // Step A: Build Multi-Seed Set
         const seedSet = [];
         if (currentTrack) seedSet.push(currentTrack);
 
@@ -363,7 +414,7 @@ window.fetchAutoDjBatch = async () => {
                     const searchResults = await window.performSearch(`${winner.title} ${winner.author || ''}`);
                     if (searchResults && searchResults.length > 0) {
                         const winnerTrack = searchResults[0];
-                        winnerTrack.rbId = winner.rbId; // Preserve identity mapping
+                        winnerTrack.rbId = winner.rbId;
                         resolvedWinners.push(winnerTrack);
                     }
                 } catch (e) {}
@@ -382,7 +433,7 @@ window.fetchAutoDjBatch = async () => {
                 thumb: w.videoId ? `https://i.ytimg.com/vi/${w.videoId}/hqdefault.jpg` : (w.thumb || '')
             })));
             if (typeof window.saveCache === 'function') window.saveCache();
-            console.log(`Octave Alg Engine: Queued ${filteredWinners.length} session-matched tracks.`);
+            console.log(`Octave Alg Engine: Queued ${filteredWinners.length} target-blended tracks.`);
         }
 
     } catch (e) {
@@ -424,7 +475,7 @@ window.generateDiscoverMix = async () => {
             <div style="padding: 60px 20px; text-align:center;">
                 <i class="fa-solid fa-wand-magic-sparkles fa-bounce" style="font-size: 40px; color: var(--accent); margin-bottom: 20px;"></i>
                 <h2>Brewing your mix...</h2>
-                <p style="color:var(--text-secondary);font-size:14px;margin-top:10px;">Running Candidate Tournament via Session Vector & Identity Engine.</p>
+                <p style="color:var(--text-secondary);font-size:14px;margin-top:10px;">Running Candidate Tournament via Adaptive Weight Matrix.</p>
             </div>
         `;
     }
