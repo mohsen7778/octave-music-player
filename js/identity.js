@@ -4,7 +4,7 @@
 
 // ============================================================
 // identity.js — Octave Canonical Identity & Persistent Cache Engine
-// FIXED: Parameter Query Fix (`seeds` instead of `seedTrackIds`)
+// FIXED: Indirect Artist-First Track Resolution & Defensive Parsing
 // ============================================================
 
 window.OCTAVE_IDENTITY = {
@@ -57,6 +57,29 @@ setInterval(() => {
     window.saveIdentityCache();
 }, 45000);
 
+// Helper for CORS-resilient API fetches
+async function fetchWithCorsFallback(rawUrl, timeoutMs = 5000) {
+    const urlsToTry = [
+        rawUrl,
+        `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`
+    ];
+
+    for (const url of urlsToTry) {
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            const res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timer);
+            if (res.ok) {
+                return await res.json();
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    return null;
+}
+
 window.getCanonicalTrack = (track) => {
     if (!track) return null;
     
@@ -76,6 +99,16 @@ window.getCanonicalTrack = (track) => {
     };
 };
 
+// Helper string normalizer for title fuzzy matching
+function normalizeStr(str) {
+    return (str || '')
+        .toLowerCase()
+        .replace(/[\(\[\^].*?[\)\]\$]/g, '') // strip (official audio), [lyric video], etc.
+        .replace(/[^a-z0-9]/g, '')           // remove special chars
+        .trim();
+}
+
+// RESOLVE TRACK TO RB ID via Artist-First Lookup
 window.resolveTrackToRbId = async (track) => {
     if (!track) return null;
     if (track.rbId) return track.rbId;
@@ -93,42 +126,74 @@ window.resolveTrackToRbId = async (track) => {
         return rbId;
     }
 
+    if (!cleanArtist) return null;
+
     try {
-        const url = `https://api.reccobeats.com/v1/track/search?searchText=${encodeURIComponent(`${cleanTitle} ${cleanArtist}`)}`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
-        
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeout);
+        // Step 1: Artist Search
+        const artistUrl = `https://api.reccobeats.com/v1/artist/search?searchText=${encodeURIComponent(cleanArtist)}`;
+        const artistData = await fetchWithCorsFallback(artistUrl, 4000);
 
-        if (res.ok) {
-            const data = await res.json();
-            const list = data.content || data.data || [];
-            if (list.length > 0) {
-                const bestMatch = list[0];
-                const rbId = bestMatch.id;
+        const artistList = artistData?.content || artistData?.data || (Array.isArray(artistData) ? artistData : []);
+        if (artistList.length === 0) return null;
 
-                if (track.videoId) window.OCTAVE_IDENTITY.videoToRb.set(track.videoId, rbId);
-                window.OCTAVE_IDENTITY.queryToRb.set(queryKey, rbId);
-                
-                window.OCTAVE_IDENTITY.rbToTrack.set(rbId, {
-                    rbId: rbId,
-                    videoId: track.videoId || null,
-                    isrc: bestMatch.isrc || null,
-                    title: bestMatch.trackTitle || track.title,
-                    author: bestMatch.artistName || track.author,
-                    cachedAt: Date.now()
-                });
+        const bestArtist = artistList[0];
+        const artistId = bestArtist?.id || bestArtist?.artistId;
 
-                window.saveIdentityCache();
-                return rbId;
+        if (!artistId) return null;
+
+        // Step 2: Fetch Artist Tracks
+        const tracksUrl = `https://api.reccobeats.com/v1/artist/${artistId}/track`;
+        const tracksData = await fetchWithCorsFallback(tracksUrl, 5000);
+
+        const trackList = tracksData?.content || tracksData?.data || (Array.isArray(tracksData) ? tracksData : []);
+        if (trackList.length === 0) return null;
+
+        // Step 3: Fuzzy Track Matching
+        const targetNormalized = normalizeStr(cleanTitle);
+        let bestMatchedTrack = null;
+
+        for (const t of trackList) {
+            const candTitle = t.trackTitle || t.title || t.name || '';
+            const candNormalized = normalizeStr(candTitle);
+
+            if (candNormalized === targetNormalized || candNormalized.includes(targetNormalized) || targetNormalized.includes(candNormalized)) {
+                bestMatchedTrack = t;
+                break;
             }
         }
-    } catch(e) {}
-    
+
+        if (bestMatchedTrack && bestMatchedTrack.id) {
+            const rbId = bestMatchedTrack.id;
+            const isrc = bestMatchedTrack.isrc || null;
+            const officialTitle = bestMatchedTrack.trackTitle || bestMatchedTrack.title || track.title;
+            const officialArtist = bestMatchedTrack.artistName || (bestMatchedTrack.artists && bestMatchedTrack.artists[0] ? bestMatchedTrack.artists[0].name : '') || track.author;
+
+            // Bind Cache Mappings
+            if (track.videoId) window.OCTAVE_IDENTITY.videoToRb.set(track.videoId, rbId);
+            window.OCTAVE_IDENTITY.queryToRb.set(queryKey, rbId);
+
+            window.OCTAVE_IDENTITY.rbToTrack.set(rbId, {
+                rbId: rbId,
+                videoId: track.videoId || null,
+                isrc: isrc,
+                title: officialTitle,
+                author: officialArtist,
+                cachedAt: Date.now()
+            });
+
+            window.saveIdentityCache();
+            console.log(`Octave Identity: Mapped "${track.title}" -> ReccoBeats rbId: ${rbId}`);
+            return rbId;
+        }
+
+    } catch(e) {
+        console.warn("Octave Identity: Artist-first resolution error", e);
+    }
+
     return null;
 };
 
+// BATCH AUDIO FEATURES RESOLUTION
 window.resolveAudioFeaturesBatch = async (rbIds) => {
     if (!rbIds || !Array.isArray(rbIds) || rbIds.length === 0) return {};
 
@@ -154,17 +219,13 @@ window.resolveAudioFeaturesBatch = async (rbIds) => {
     for (const chunk of chunks) {
         try {
             const url = `https://api.reccobeats.com/v1/audio-features?ids=${encodeURIComponent(chunk.join(','))}`;
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 5000);
-            
-            const res = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeout);
+            const data = await fetchWithCorsFallback(url, 5000);
 
-            if (res.ok) {
-                const data = await res.json();
+            if (data) {
                 const list = data.content || data.data || (Array.isArray(data) ? data : []);
                 list.forEach(feat => {
-                    if (feat && feat.id) {
+                    if (feat && (feat.id || feat.trackId)) {
+                        const featId = feat.id || feat.trackId;
                         const parsedFeatures = {
                             danceability: feat.danceability ?? 0.5,
                             energy: feat.energy ?? 0.5,
@@ -176,8 +237,8 @@ window.resolveAudioFeaturesBatch = async (rbIds) => {
                             mode: feat.mode ?? 1,
                             loudness: feat.loudness ?? -6.0
                         };
-                        window.OCTAVE_IDENTITY.rbFeatures.set(feat.id, parsedFeatures);
-                        resultMap[feat.id] = parsedFeatures;
+                        window.OCTAVE_IDENTITY.rbFeatures.set(featId, parsedFeatures);
+                        resultMap[featId] = parsedFeatures;
                     }
                 });
                 window.saveIdentityCache();
@@ -188,7 +249,7 @@ window.resolveAudioFeaturesBatch = async (rbIds) => {
     return resultMap;
 };
 
-// RESOLVE RECOMMENDATIONS (FIXED: Correct API param 'seeds')
+// RESOLVE RECOMMENDATIONS
 window.resolveReccoCandidates = async (seedRbIds) => {
     const validSeeds = seedRbIds.filter(Boolean).slice(0, 5);
     if (validSeeds.length === 0) return [];
@@ -200,21 +261,16 @@ window.resolveReccoCandidates = async (seedRbIds) => {
 
     try {
         const url = `https://api.reccobeats.com/v1/track/recommendation?seeds=${encodeURIComponent(validSeeds.join(','))}&size=40`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 6000);
-        
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeout);
+        const data = await fetchWithCorsFallback(url, 6000);
 
-        if (res.ok) {
-            const data = await res.json();
+        if (data) {
             const list = data.content || data.data || (Array.isArray(data) ? data : []);
-            
+
             const candidates = list.map(item => {
-                const rbId = item.id;
-                const title = item.trackTitle || item.title;
-                const author = item.artistName || (item.artists && item.artists[0] ? item.artists[0].name : '') || item.author;
-                
+                const rbId = item.id || item.trackId;
+                const title = item.trackTitle || item.title || item.name || '';
+                const author = item.artistName || (item.artists && item.artists[0] ? (item.artists[0].name || item.artists[0]) : '') || item.author || '';
+
                 if (rbId && !window.OCTAVE_IDENTITY.rbToTrack.has(rbId)) {
                     window.OCTAVE_IDENTITY.rbToTrack.set(rbId, {
                         rbId: rbId,
@@ -231,7 +287,7 @@ window.resolveReccoCandidates = async (seedRbIds) => {
                     title: title,
                     author: author,
                     popularity: item.popularity || 50,
-                    durationMs: item.durationMs || 0
+                    durationMs: item.durationMs || item.duration_ms || 0
                 };
             });
 
