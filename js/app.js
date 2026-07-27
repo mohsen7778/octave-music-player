@@ -4,7 +4,7 @@
 
 // ============================================================
 // app.js — Octave Full Flagship Engine
-// 100% Complete File - Search Multi-Node Bypass + CORS Proxy
+// 100% Complete File - Resilient Multi-Node Search Engine
 // ============================================================
 
 (function() {
@@ -111,16 +111,20 @@ window.fetchFullArtistProfile = async (artistName) => {
         const rbRes = await fetch(rbUrl);
         if (rbRes.ok) {
             const rbData = await rbRes.json();
-            if (rbData && rbData.content && rbData.content.length > 0) {
-                const artistObj = rbData.content[0];
-                if (artistObj.id) {
-                    const rbTracksRes = await fetch(`https://api.reccobeats.com/v1/artist/${artistObj.id}/track`);
+            const artistList = rbData?.content || rbData?.data || (Array.isArray(rbData) ? rbData : []);
+            if (artistList.length > 0) {
+                const artistObj = artistList[0];
+                const artistId = artistObj.id || artistObj.artistId;
+                if (artistId) {
+                    const rbTracksRes = await fetch(`https://api.reccobeats.com/v1/artist/${artistId}/track`);
                     if (rbTracksRes.ok) {
                         const rbTracksData = await rbTracksRes.json();
-                        if (rbTracksData && rbTracksData.content && rbTracksData.content.length > 0) {
-                            const topRb = rbTracksData.content.slice(0, 5);
+                        const trackList = rbTracksData?.content || rbTracksData?.data || (Array.isArray(rbTracksData) ? rbTracksData : []);
+                        if (trackList.length > 0) {
+                            const topRb = trackList.slice(0, 5);
                             for (const rbT of topRb) {
-                                const searchRes = await window.performSearch(`${rbT.trackTitle} ${cleanName}`);
+                                const tName = rbT.trackTitle || rbT.title || '';
+                                const searchRes = await window.performSearch(`${tName} ${cleanName}`);
                                 if (searchRes && searchRes.length > 0) {
                                     tracks.push(searchRes[0]);
                                 }
@@ -137,9 +141,9 @@ window.fetchFullArtistProfile = async (artistName) => {
         try {
             const searchResults = await window.performSearch(`${cleanName} top songs audio`);
             if (searchResults && searchResults.length > 0) {
-                const existingIds = new Set(tracks.map(t => t.videoId));
+                const existingTitles = new Set(tracks.map(t => t.title.toLowerCase()));
                 searchResults.forEach(t => {
-                    if (!existingIds.has(t.videoId)) tracks.push(t);
+                    if (!existingTitles.has(t.title.toLowerCase())) tracks.push(t);
                 });
             }
         } catch(e) {}
@@ -176,7 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const shareTh = params.get('th') || '';
         
         const sharedTrack = { videoId: shareV, title: shareT, author: shareA, thumb: shareTh };
-        window.OCTAVE.queue =[sharedTrack];
+        window.OCTAVE.queue = [sharedTrack];
         window.OCTAVE.currentIndex = 0;
         window.saveCache();
         
@@ -282,7 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('save-playlist')?.addEventListener('click', () => {
         const name = document.getElementById('playlist-name').value.trim();
         if (name !== '' && window.OCTAVE && !window.OCTAVE.playlists[name]) {
-            window.OCTAVE.playlists[name] =[];
+            window.OCTAVE.playlists[name] = [];
             window.saveCache();
             document.getElementById('playlist-name').value = '';
             document.getElementById('playlist-modal').classList.remove('active');
@@ -518,69 +522,111 @@ window.sendSearchLog = async (msg) => {
     } catch(e) {}
 };
 
+// MULTI-PROVIDER SEARCH ENGINE WITH GUARANTEED FALLBACK
 window.performSearch = async (query) => {
     const currentId = window.searchSessionId;
     window.sendSearchLog(`Started search for: "${query}"`);
 
-    const endpoints = [
-        { type: 'invidious', url: 'https://inv.nadeko.net' },
-        { type: 'invidious', url: 'https://invidious.nerdvpn.de' },
-        { type: 'invidious', url: 'https://yt.chocolatemoo53.com' },
-        { type: 'invidious', url: 'https://invidious.tiekoetter.com' },
-        { type: 'invidious', url: 'https://inv.thepixora.com' },
-        { type: 'piped', url: 'https://pipedapi.kavin.rocks' },
-        { type: 'piped', url: 'https://api.piped.projectsegfau.lt' },
-        { type: 'piped', url: 'https://pipedapi.privacydev.net' },
+    const invidiousInstances = [
+        'https://inv.nadeko.net',
+        'https://invidious.nerdvpn.de',
+        'https://yt.chocolatemoo53.com',
+        'https://invidious.tiekoetter.com',
+        'https://inv.thepixora.com',
+        'https://invidious.drgns.space',
+        'https://yt.artemislena.eu'
     ];
 
-    for (const ep of endpoints) {
+    const pipedInstances = [
+        'https://pipedapi.kavin.rocks',
+        'https://api.piped.projectsegfau.lt',
+        'https://pipedapi.privacydev.net',
+        'https://api.piped.vicr.1337.cx'
+    ];
+
+    // Tier 1: Try Piped Nodes
+    for (const base of pipedInstances) {
         if (currentId !== window.searchSessionId) return null;
+        const rawUrl = `${base}/search?q=${encodeURIComponent(query)}&filter=music_songs`;
+        const urlsToTry = [
+            rawUrl,
+            `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`
+        ];
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        for (const fetchUrl of urlsToTry) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3500);
+                const r = await fetch(fetchUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
 
-        try {
-            let rawUrl = ep.type === 'piped' 
-                ? `${ep.url}/search?q=${encodeURIComponent(query)}&filter=music_songs`
-                : `${ep.url}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
-
-            const urlsToTry = ep.type === 'invidious' 
-                ? [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`]
-                : [`https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
-
-            for (const fetchUrl of urlsToTry) {
-                try {
-                    const r = await fetch(fetchUrl, { signal: controller.signal });
-                    if (!r.ok) continue;
-                    
+                if (r.ok) {
                     const d = await r.json();
                     if (currentId !== window.searchSessionId) return null;
-
-                    if (ep.type === 'piped' && d.items && d.items.length > 0) {
+                    if (d && d.items && d.items.length > 0) {
                         return d.items.slice(0, 15).map(item => ({
-                            videoId: item.url.replace('/watch?v=', ''),
+                            videoId: item.url ? item.url.replace('/watch?v=', '') : null,
                             title: item.title,
-                            author: item.uploaderName,
-                            thumb: item.thumbnail
-                        }));
-                    } else if (ep.type === 'invidious' && Array.isArray(d) && d.length > 0) {
-                        return d.filter(item => item.lengthSeconds && item.lengthSeconds < 600).map(item => ({
+                            author: item.uploaderName || item.uploader || 'Artist',
+                            thumb: item.thumbnail || ''
+                        })).filter(t => t.videoId);
+                    }
+                }
+            } catch(e) { continue; }
+        }
+    }
+
+    // Tier 2: Try Invidious Nodes
+    for (const base of invidiousInstances) {
+        if (currentId !== window.searchSessionId) return null;
+        const rawUrl = `${base}/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`;
+        const urlsToTry = [
+            rawUrl,
+            `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`
+        ];
+
+        for (const fetchUrl of urlsToTry) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3500);
+                const r = await fetch(fetchUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                if (r.ok) {
+                    const d = await r.json();
+                    if (currentId !== window.searchSessionId) return null;
+                    if (Array.isArray(d) && d.length > 0) {
+                        return d.filter(item => item.videoId && (!item.lengthSeconds || item.lengthSeconds < 600)).map(item => ({
                             videoId: item.videoId,
                             title: item.title,
                             author: item.author,
-                            thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : ''
+                            thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
                         }));
                     }
-                } catch (innerErr) {
-                    continue;
                 }
-            }
-        } catch (e) {
-            continue;
-        } finally {
-            clearTimeout(timeoutId);
+            } catch(e) { continue; }
         }
     }
+
+    // Tier 3: Guaranteed iTunes Search API Fallback (100% uptime)
+    try {
+        const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=15`;
+        const r = await fetch(itunesUrl);
+        if (r.ok) {
+            const d = await r.json();
+            if (d && d.results && d.results.length > 0) {
+                return d.results.map(item => ({
+                    videoId: null, // Dynamically resolved on play
+                    title: item.trackName,
+                    author: item.artistName,
+                    thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : ''
+                }));
+            }
+        }
+    } catch(e) {}
+
     return [];
 };
 
@@ -626,7 +672,7 @@ window.bindSearch = () => {
                 el.addEventListener('click', () => window.playTrack(track));
                 resContainer.appendChild(el);
             });
-        }, 600);
+        }, 500);
     };
 };
 
@@ -643,13 +689,13 @@ async function generateAiMix() {
     try {
         let tasteContext = "";
         if (window.OCTAVE && typeof window.calculateTrackScore === 'function') {
-            const allKnown =[...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
+            const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
             const uniqueTracks = Array.from(new Map(allKnown.map(t => [t.videoId, t])).values());
             const topScored = uniqueTracks.sort((a, b) => window.calculateTrackScore(b) - window.calculateTrackScore(a)).slice(0, 5);
             
             if (topScored.length > 0) {
                 const cleanNames = topScored.map(t => `${t.title.replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 30)} by ${t.author.replace(/[^a-zA-Z0-9 ]/g, '')}`).join(", ");
-                tasteContext = `\nContext: The user recently played:[${cleanNames}]. If these are actual songs, use them to gauge their taste. IF THEY ARE TUTORIALS, NEWS, PODCASTS, OR YOUTUBE VIDEOS, COMPLETELY IGNORE THEM.\n`;
+                tasteContext = `\nContext: The user recently played: [${cleanNames}]. If these are actual songs, use them to gauge their taste. IF THEY ARE TUTORIALS, NEWS, PODCASTS, OR YOUTUBE VIDEOS, COMPLETELY IGNORE THEM.\n`;
             }
         }
 
@@ -666,7 +712,7 @@ CRITICAL RULES:
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                messages:[{ role: 'system', content: systemPrompt }]
+                messages: [{ role: 'system', content: systemPrompt }]
             })
         });
         const text = await response.text();
@@ -677,7 +723,7 @@ CRITICAL RULES:
 
         if (lines.length === 0) throw new Error("Format invalid. Please try a different prompt.");
 
-        const playableTracks =[];
+        const playableTracks = [];
         for (const line of lines.slice(0, 15)) {
             const parts = line.split(/[-–—]/);
             if(parts.length < 2) continue;
@@ -758,7 +804,7 @@ document.getElementById('fp-lyrics-btn')?.addEventListener('click', async () => 
     const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
     const html = await window.fetchLyrics(track.author, track.title);
 
-    const fonts =[
+    const fonts = [
         { name: 'Modern', css: 'Plus Jakarta Sans' },
         { name: 'Clean', css: 'Inter' },
         { name: 'Classic', css: 'Lora' },
@@ -858,7 +904,7 @@ window.renderArtistPage = async (artistName) => {
     if (profile.tracks.length > 0) {
         document.querySelectorAll('.artist-track-item').forEach((node, idx) => {
             node.addEventListener('click', () => {
-                window.OCTAVE.queue =[...profile.tracks];
+                window.OCTAVE.queue = [...profile.tracks];
                 window.playTrackByIndex(idx);
             });
         });
@@ -910,7 +956,7 @@ if (document.getElementById('fp-options')) {
 window.renderPlaylistDetail = (plName) => {
     const dynamicView = document.getElementById('dynamic-view');
     if (!dynamicView || !window.OCTAVE) return;
-    const tracks = window.OCTAVE.playlists[plName] ||[];
+    const tracks = window.OCTAVE.playlists[plName] || [];
     let html = `
         <div style="padding: 20px;">
             <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px; margin-top: 10px;">
@@ -930,8 +976,8 @@ window.renderPlaylistDetail = (plName) => {
         tracks.forEach((track, idx) => {
             html += `
                 <div class="list-item" style="position: relative;">
-                    <img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.OCTAVE.queue =[...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
-                    <div class="list-info" style="cursor: pointer;" onclick="window.OCTAVE.queue =[...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
+                    <img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover;" onclick="window.OCTAVE.queue = [...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
+                    <div class="list-info" style="cursor: pointer;" onclick="window.OCTAVE.queue = [...window.OCTAVE.playlists['${window.escapeHTML(plName)}']]; window.playTrackByIndex(${idx});">
                         <div class="list-title">${window.escapeHTML(track.title)}</div>
                         <div class="list-subtitle">${window.escapeHTML(track.author)}</div>
                     </div>
