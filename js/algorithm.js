@@ -4,7 +4,7 @@
 
 // ============================================================
 // algorithm.js — Octave 10/10 AI Recommendation Engine
-// FIXED: ReccoBeats Query Integration + Strict Fallback
+// Feature-Space Skip Zones + Identity + Session Vector + DJ Flow
 // ============================================================
 
 if (!window.escapeHTML) {
@@ -43,9 +43,67 @@ if (window.OCTAVE) {
     if (!window.OCTAVE.userWeights) {
         window.OCTAVE.userWeights = { energy: 0.30, valence: 0.30, danceability: 0.20, tempo: 0.20 };
     }
+    
+    // FEATURE-SPACE SKIP ZONES GRID (Anti-Preference Memory)
+    if (!window.OCTAVE.skipZones) {
+        window.OCTAVE.skipZones = {};
+    }
 }
 
-// --- HARMONIC KEY & DJ TRANSITION FLOW ---
+// ============================================================
+// 1. FEATURE-SPACE SKIP ZONES ENGINE
+// ============================================================
+
+window.getZoneKey = (feat) => {
+    if (!feat) return 'mid|mid|mid|maj|dry';
+    const e = (feat.energy ?? 0.5) < 0.33 ? 'low' : (feat.energy ?? 0.5) < 0.66 ? 'mid' : 'high';
+    const v = (feat.valence ?? 0.5) < 0.33 ? 'low' : (feat.valence ?? 0.5) < 0.66 ? 'mid' : 'high';
+    const t = (feat.tempo ?? 120) < 90 ? 'slow' : (feat.tempo ?? 120) < 130 ? 'mid' : 'fast';
+    const m = (feat.mode ?? 1) === 1 ? 'maj' : 'min';
+    const a = (feat.acousticness ?? 0.5) < 0.5 ? 'dry' : 'wet';
+    return `${e}|${v}|${t}|${m}|${a}`;
+};
+
+window.recordZoneOutcome = (feat, isSkip) => {
+    if (!feat || !window.OCTAVE) return;
+    const key = window.getZoneKey(feat);
+    if (!window.OCTAVE.skipZones) window.OCTAVE.skipZones = {};
+    
+    if (!window.OCTAVE.skipZones[key]) {
+        window.OCTAVE.skipZones[key] = { skips: 0, completes: 0 };
+    }
+    
+    if (isSkip) {
+        window.OCTAVE.skipZones[key].skips++;
+        console.log(`Octave SkipZones: Recorded SKIP for zone [${key}] ->`, window.OCTAVE.skipZones[key]);
+    } else {
+        window.OCTAVE.skipZones[key].completes++;
+        console.log(`Octave SkipZones: Recorded COMPLETE for zone [${key}] ->`, window.OCTAVE.skipZones[key]);
+    }
+
+    if (typeof window.saveCache === 'function') window.saveCache();
+};
+
+window.getZonePenalty = (feat) => {
+    if (!feat || !window.OCTAVE || !window.OCTAVE.skipZones) return 0;
+    const key = window.getZoneKey(feat);
+    const zone = window.OCTAVE.skipZones[key];
+    
+    if (!zone) return 0;
+    const total = zone.skips + zone.completes;
+    if (total < 3) return 0; // Cold-start safety threshold
+
+    const rate = zone.skips / total;
+    if (rate > 0.70) return -999; // Hard reject
+    if (rate > 0.40) return -30;  // Heavy penalty
+    if (rate < 0.20) return +10;  // High-affinity bonus
+    return 0;
+};
+
+// ============================================================
+// 2. HARMONIC KEY & DJ TRANSITION FLOW
+// ============================================================
+
 function computeHarmonicCompatibility(keyA, modeA, keyB, modeB) {
     if (keyA === undefined || keyB === undefined || keyA < 0 || keyB < 0) return 0;
     const posA = (keyA * 7) % 12;
@@ -75,7 +133,10 @@ function computeTransitionFlowScore(currentFeat, candFeat) {
     return flowScore;
 }
 
-// --- TASTE & SESSION UPDATES ---
+// ============================================================
+// 3. TASTE & SESSION UPDATES
+// ============================================================
+
 window.updateAdaptiveWeights = (audioFeatures, isSkip) => {
     if (!audioFeatures || !window.OCTAVE || !window.OCTAVE.userWeights) return;
     const w = window.OCTAVE.userWeights;
@@ -131,6 +192,9 @@ window.updateTasteProfile = (audioFeatures, artistName) => {
     window.updateSessionVector(audioFeatures);
     window.updateAdaptiveWeights(audioFeatures, false);
 
+    // Record Positive Outcome in Feature-Space Skip Zone
+    window.recordZoneOutcome(audioFeatures, false);
+
     if (window.reinforceTasteGraph && artistName) {
         window.reinforceTasteGraph(artistName, audioFeatures, 1.0);
     }
@@ -149,7 +213,10 @@ window.updateTasteProfile = (audioFeatures, artistName) => {
     if (typeof window.saveCache === 'function') window.saveCache();
 };
 
-// --- CANDIDATE TOURNAMENT ---
+// ============================================================
+// 4. CANDIDATE TOURNAMENT & ZONE PENALTY EVALUATION
+// ============================================================
+
 function computeAudioDistance(featA, featB) {
     if (!featA || !featB) return 0.5;
     const w = (window.OCTAVE && window.OCTAVE.userWeights) ? window.OCTAVE.userWeights : { energy: 0.30, valence: 0.30, danceability: 0.20, tempo: 0.20 };
@@ -211,6 +278,16 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
 
         let score = 0;
         const candFeat = candidateFeaturesMap[cand.rbId];
+
+        // 0. FEATURE-SPACE SKIP ZONES FILTER (Hard Reject / Soft Penalty)
+        if (candFeat) {
+            const zonePenalty = window.getZonePenalty(candFeat);
+            if (zonePenalty === -999) {
+                console.log(`Octave Tournament: Hard Rejected candidate "${cand.title}" via SkipZone rule.`);
+                continue; // Hard Reject: Candidate falls in a >70% skip rate zone
+            }
+            score += zonePenalty;
+        }
 
         // 1. Vector Similarity (+35 max)
         if (candFeat && targetVector) {
@@ -277,7 +354,10 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
     return safeWinners;
 }
 
-// --- MAIN AUTO-DJ ---
+// ============================================================
+// 5. MAIN AUTO-DJ ENGINE
+// ============================================================
+
 window.isFetchingBatch = false;
 
 window.fetchAutoDjBatch = async () => {
@@ -317,7 +397,6 @@ window.fetchAutoDjBatch = async () => {
             candidates = await window.resolveReccoCandidates(seedRbIds);
         }
 
-        // Backup Invidious Candidates if ReccoBeats returns few results
         if (candidates.length < 5) {
             for (const seed of seedSet) {
                 if (!seed.videoId) continue;
@@ -446,7 +525,7 @@ window.fetchDailyRecommendations = async () => {
             for (const fetchUrl of urlsToTry) {
                 try {
                     const controller = new AbortController();
-                    const id = setTimeout(() => controller.abort(), 5000);
+                    const id = setTimeout(() => controller.abort(), 4000);
                     const r = await fetch(fetchUrl, { signal: controller.signal });
                     clearTimeout(id);
                     if (r.ok) {
