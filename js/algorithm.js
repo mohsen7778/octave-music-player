@@ -5,6 +5,7 @@
 // ============================================================
 // algorithm.js — Octave 10/10 AI Recommendation Engine (FINAL)
 // Integrated: Identity + Session Vector + DJ Flow + Taste Graph
+// Fixed: Apple RSS v2 Endpoint & Fresh-User Recommendation Fallbacks
 // ============================================================
 
 if (!window.escapeHTML) {
@@ -131,7 +132,6 @@ window.updateTasteProfile = (audioFeatures, artistName) => {
     window.updateSessionVector(audioFeatures);
     window.updateAdaptiveWeights(audioFeatures, false);
 
-    // Reinforce Taste Graph Nodes & Edges
     if (window.reinforceTasteGraph && artistName) {
         window.reinforceTasteGraph(artistName, audioFeatures, 1.0);
     }
@@ -362,5 +362,223 @@ window.generateDiscoverMix = async () => {
     await window.fetchAutoDjBatch();
     if (window.OCTAVE && window.OCTAVE.queue && window.OCTAVE.queue.length > 0) {
         window.playTrackByIndex(0);
+    }
+};
+
+// --- DAILY RECOMMENDATIONS WITH FRESH-USER FALLBACK ---
+window.fetchDailyRecommendations = async () => {
+    if (!window.OCTAVE) return;
+    const now = Date.now();
+    const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
+
+    if (window.OCTAVE.dailyRecs && window.OCTAVE.dailyRecs.tracks && window.OCTAVE.dailyRecs.tracks.length > 0) {
+        const usesBadThumbs = window.OCTAVE.dailyRecs.tracks.some(t => t.thumb && !t.thumb.includes('ytimg.com'));
+        if (!usesBadThumbs && (now - window.OCTAVE.dailyRecs.timestamp < FIVE_DAYS)) return;
+    }
+
+    const allKnown = [...Object.values(window.OCTAVE.liked || {}), ...(window.OCTAVE.recentPlayed || [])];
+    let candidateList = [];
+
+    if (allKnown.length > 0 && window.resolveReccoCandidates) {
+        const seed = allKnown[Math.floor(Math.random() * allKnown.length)];
+        const rbId = seed.rbId || (window.resolveTrackToRbId ? await window.resolveTrackToRbId(seed) : null);
+        if (rbId) candidateList = await window.resolveReccoCandidates([rbId]);
+    }
+
+    // Fallback if candidateList is empty (fresh user or ReccoBeats lookup timeout)
+    if (candidateList.length === 0) {
+        for (let i = 0; i < window.INVIDIOUS.length; i++) {
+            const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+            const rawUrl = `${base}/api/v1/popular?videoCategory=10`;
+            const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
+
+            let fetched = false;
+            for (const fetchUrl of urlsToTry) {
+                try {
+                    const controller = new AbortController();
+                    const id = setTimeout(() => controller.abort(), 5000);
+                    const r = await fetch(fetchUrl, { signal: controller.signal });
+                    clearTimeout(id);
+                    if (r.ok) {
+                        const d = await r.json();
+                        if (Array.isArray(d) && d.length > 0) {
+                            candidateList = d.map(v => ({
+                                videoId: v.videoId,
+                                title: v.title,
+                                author: v.author,
+                                durationMs: (v.lengthSeconds || 0) * 1000
+                            }));
+                            fetched = true;
+                            break;
+                        }
+                    }
+                } catch (e) { continue; }
+            }
+            if (fetched) break;
+        }
+    }
+
+    const ranked = await runCandidateTournament(candidateList, null, null);
+    const resolvedRecs = [];
+
+    for (const item of ranked.slice(0, 10)) {
+        if (item.videoId) {
+            resolvedRecs.push(item);
+        } else {
+            try {
+                const res = await window.performSearch(`${item.title} ${item.author || ''}`);
+                if (res && res.length > 0) resolvedRecs.push(res[0]);
+            } catch (e) {}
+        }
+    }
+
+    if (resolvedRecs.length > 0) {
+        window.OCTAVE.dailyRecs = {
+            timestamp: now,
+            tracks: resolvedRecs.map(rec => ({
+                videoId: rec.videoId,
+                title: rec.title,
+                author: rec.author,
+                thumb: rec.videoId ? `https://i.ytimg.com/vi/${rec.videoId}/hqdefault.jpg` : (rec.thumb || '')
+            }))
+        };
+        if (typeof window.saveCache === 'function') window.saveCache();
+        const activeTab = document.querySelector('.nav-item.active');
+        if (activeTab && activeTab.getAttribute('data-tab') === 'home' && typeof window.renderHome === 'function') {
+            window.renderHome();
+        }
+    }
+};
+
+// --- TRENDING MUSIC CHARTS ---
+window.fetchTrendingMusic = async () => {
+    const trendingGrid = document.getElementById('home-trending-grid');
+    if (!trendingGrid) return;
+
+    const now = Date.now();
+    const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+
+    if (window.OCTAVE && window.OCTAVE.trendingData && window.OCTAVE.trendingData.tracks && window.OCTAVE.trendingData.tracks.length > 0) {
+        if (now - window.OCTAVE.trendingData.timestamp < THREE_DAYS) {
+            if (typeof window.renderTrendingTracks === 'function') {
+                window.renderTrendingTracks(window.OCTAVE.trendingData.tracks, trendingGrid);
+            }
+            return;
+        }
+    }
+
+    // Attempt 1: Modern Apple v2 Marketing RSS Feed
+    try {
+        const r = await fetch(`https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json?_t=${Date.now()}`, { cache: 'no-store' });
+        if (r.ok) {
+            const d = await r.json();
+            if (d.feed && d.feed.results && d.feed.results.length > 0) {
+                const newTracks = d.feed.results.map(item => ({
+                    videoId: null,
+                    title: item.name,
+                    author: item.artistName,
+                    thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : ''
+                }));
+
+                if (newTracks.length > 0 && window.OCTAVE) {
+                    window.OCTAVE.trendingData = {
+                        timestamp: now,
+                        tracks: newTracks
+                    };
+                    if (typeof window.saveCache === 'function') window.saveCache();
+                    if (typeof window.renderTrendingTracks === 'function') {
+                        window.renderTrendingTracks(newTracks, trendingGrid);
+                    }
+                    return;
+                }
+            }
+        }
+    } catch(e) {}
+
+    // Attempt 2: Invidious Global Popular Category Fallback
+    try {
+        for (let i = 0; i < window.INVIDIOUS.length; i++) {
+            const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+            const rawUrl = `${base}/api/v1/popular?videoCategory=10`;
+            const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
+
+            let success = false;
+            for (const fetchUrl of urlsToTry) {
+                try {
+                    const controller = new AbortController();
+                    const id = setTimeout(() => controller.abort(), 5000);
+                    const r = await fetch(fetchUrl, { signal: controller.signal });
+                    clearTimeout(id);
+                    if (r.ok) {
+                        const d = await r.json();
+                        if (Array.isArray(d) && d.length > 0) {
+                            const newTracks = d.map(v => ({
+                                videoId: v.videoId,
+                                title: v.title,
+                                author: v.author,
+                                thumb: `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`
+                            }));
+                            window.OCTAVE.trendingData = { timestamp: now, tracks: newTracks };
+                            if (typeof window.saveCache === 'function') window.saveCache();
+                            if (typeof window.renderTrendingTracks === 'function') {
+                                window.renderTrendingTracks(newTracks, trendingGrid);
+                            }
+                            success = true;
+                            break;
+                        }
+                    }
+                } catch (e) { continue; }
+            }
+            if (success) return;
+        }
+    } catch(e) {}
+
+    trendingGrid.innerHTML = '<div class="empty-state-text">Failed to load charts.</div>';
+};
+
+window.renderTrendingTracks = (tracks, container) => {
+    if (!container) return;
+    container.innerHTML = '';
+    tracks.forEach(track => {
+        const el = document.createElement('div');
+        el.className = 'square-card';
+        el.innerHTML = `<div class="card-art shadow-heavy" style="background-image: url('${track.thumb}'); background-size: cover;"></div><div class="card-title">${window.escapeHTML(track.title)}</div>`;
+
+        el.addEventListener('click', async () => {
+            if (!track.videoId) {
+                el.style.opacity = '0.5';
+                const query = `${track.author} ${track.title} audio`;
+                const results = await window.performSearch(query);
+                el.style.opacity = '1';
+
+                if (results && results.length > 0) {
+                    track.videoId = results[0].videoId;
+                    if (typeof window.saveCache === 'function') window.saveCache();
+                    if (typeof window.playTrack === 'function') window.playTrack(track);
+                } else {
+                    alert("Could not find an audio stream for this track.");
+                }
+            } else {
+                if (typeof window.playTrack === 'function') window.playTrack(track);
+            }
+        });
+
+        container.appendChild(el);
+    });
+};
+
+window.smartShufflePlaylist = (plName) => {
+    if (!window.OCTAVE || !window.OCTAVE.playlists) return;
+    const pl = window.OCTAVE.playlists[plName];
+    if (pl && pl.length > 0) {
+        let sorted = [...pl].sort((a, b) => {
+            const countA = (window.OCTAVE.playStats && window.OCTAVE.playStats[a.videoId]) ? window.OCTAVE.playStats[a.videoId].plays : 0;
+            const countB = (window.OCTAVE.playStats && window.OCTAVE.playStats[b.videoId]) ? window.OCTAVE.playStats[b.videoId].plays : 0;
+            if (countB !== countA) return countB - countA;
+            return 0.5 - Math.random();
+        });
+        window.OCTAVE.queue = sorted;
+        window.OCTAVE.isNextTrackManual = true;
+        if (typeof window.playTrackByIndex === 'function') window.playTrackByIndex(0);
     }
 };
