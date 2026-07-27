@@ -4,7 +4,7 @@
 
 // ============================================================
 // algorithm.js — Octave 10/10 AI Recommendation Engine
-// FIXED: Strictly Prevents Replaying Recent Tracks & Next Queue Batching
+// FIXED: ReccoBeats Query Integration + Strict Fallback
 // ============================================================
 
 if (!window.escapeHTML) {
@@ -180,7 +180,7 @@ function computeBlendedTargetVector() {
 
 function evaluateNonMusicConfidence(title, author, durationMs) {
     const badWords = ['tutorial', 'vlog', 'news', 'podcast', 'interview', 'review', 'unboxing', 'live', 'type beat', 'full album', 'documentary', 'short', 'shorts', 'tiktok', 'meme', 'reaction', 'gameplay', 'how to', 'bts', 'behind the scenes', 'teaser', 'trailer', 'audiobook', 'karaoke', 'prank', 'funny', 'compilation'];
-    const text = `${title} ${author}`.toLowerCase();
+    const text = `${title || ''} ${author || ''}`.toLowerCase();
     let confidenceScore = 100;
 
     badWords.forEach(word => { if (text.includes(word)) confidenceScore -= 40; });
@@ -206,6 +206,7 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
     const scoredCandidates = [];
 
     for (const cand of candidates) {
+        if (!cand || !cand.title) continue;
         if (evaluateNonMusicConfidence(cand.title, cand.author, cand.durationMs) < 50) continue;
 
         let score = 0;
@@ -245,7 +246,7 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         const recentArtistCount = queue.slice(-3).filter(q => q.author && q.author.includes(cleanArtist)).length;
         if (recentArtistCount > 0) score -= (recentArtistCount * 15);
 
-        // Heavy Penalty for Recently Played Tracks
+        // Memory Decay / Recency Penalty
         const cleanTitleLower = cand.title.toLowerCase().trim();
         const recentIdx = recentPlayed.findIndex(r => 
             (r.videoId && r.videoId === cand.videoId) || 
@@ -255,12 +256,12 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
         if (recentIdx === 0) score -= 100;
         else if (recentIdx > 0 && recentIdx < 10) score -= 60;
 
-        // SESSION DUP EXCLUSION: Strictly block tracks in active session or queue
+        // Session Exclusion
         const inSessionHistory = sessionHistory.some(sId => sId === cand.videoId || (playStats[sId] && playStats[sId].title === cand.title));
         const inActiveQueue = queue.some(q => q.videoId === cand.videoId || (q.title && q.title.toLowerCase().trim() === cleanTitleLower));
         if (inSessionHistory || inActiveQueue) continue;
 
-        if (score >= -10) {
+        if (score >= -20) {
             scoredCandidates.push({ candidate: cand, score, isUnplayedArtist: !artistStats[cleanArtist] });
         }
     }
@@ -268,7 +269,7 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
     scoredCandidates.sort((a, b) => b.score - a.score);
 
     const safeWinners = scoredCandidates.slice(0, 4).map(sc => sc.candidate);
-    const explorationCand = scoredCandidates.slice(4).find(sc => sc.isUnplayedArtist && sc.score >= 5);
+    const explorationCand = scoredCandidates.slice(4).find(sc => sc.isUnplayedArtist && sc.score >= 0);
 
     if (explorationCand) safeWinners.push(explorationCand.candidate);
     else if (scoredCandidates[4]) safeWinners.push(scoredCandidates[4].candidate);
@@ -316,7 +317,7 @@ window.fetchAutoDjBatch = async () => {
             candidates = await window.resolveReccoCandidates(seedRbIds);
         }
 
-        // Secondary Fallback if ReccoBeats fails
+        // Backup Invidious Candidates if ReccoBeats returns few results
         if (candidates.length < 5) {
             for (const seed of seedSet) {
                 if (!seed.videoId) continue;
@@ -415,7 +416,7 @@ window.generateDiscoverMix = async () => {
     }
 };
 
-// --- DAILY RECOMMENDATIONS WITH FRESH-USER FALLBACK ---
+// --- DAILY RECOMMENDATIONS WITH FALLBACK ---
 window.fetchDailyRecommendations = async () => {
     if (!window.OCTAVE) return;
     const now = Date.now();
