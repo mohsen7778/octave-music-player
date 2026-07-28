@@ -397,41 +397,26 @@ window.fetchAutoDjBatch = async () => {
                 candidates = await window.resolveReccoCandidates(seedRbIds);
             }
 
+            // CLEAN MUSIC SOURCE: If candidate seeds return few results, pull strictly from Apple Music Top 50 API
             if (candidates.length < 5) {
-                for (const seed of seedSet) {
-                    if (!seed.videoId) continue;
-                    for (let i = 0; i < window.INVIDIOUS.length; i++) {
-                        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-                        const rawUrl = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
-                        const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
-
-                        let fetched = false;
-                        for (const fetchUrl of urlsToTry) {
-                            try {
-                                const controller = new AbortController();
-                                const id = setTimeout(() => controller.abort(), 4000);
-                                const r = await fetch(fetchUrl, { signal: controller.signal });
-                                clearTimeout(id);
-                                if (r.ok) {
-                                    const d = await r.json();
-                                    if (d.recommendedVideos && d.recommendedVideos.length > 0) {
-                                        d.recommendedVideos.forEach(v => {
-                                            candidates.push({
-                                                videoId: v.videoId,
-                                                title: v.title,
-                                                author: v.author,
-                                                durationMs: (v.lengthSeconds || 0) * 1000
-                                            });
-                                        });
-                                        fetched = true;
-                                        break;
-                                    }
-                                }
-                            } catch (e) { continue; }
+                try {
+                    const r = await fetch(`https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json?_t=${Date.now()}`, { cache: 'no-store' });
+                    if (r.ok) {
+                        const d = await r.json();
+                        if (d.feed && d.feed.results && d.feed.results.length > 0) {
+                            const top50 = d.feed.results;
+                            for (const item of top50) {
+                                candidates.push({
+                                    videoId: null,
+                                    title: item.name,
+                                    author: item.artistName,
+                                    thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : '',
+                                    durationMs: 200000
+                                });
+                            }
                         }
-                        if (fetched) break;
                     }
-                }
+                } catch (e) {}
             }
 
             const rankedCandidates = await runCandidateTournament(candidates, currentTrack, currentAudioFeatures);
@@ -453,7 +438,7 @@ window.fetchAutoDjBatch = async () => {
                 if (resolvedWinners.length >= 5) break;
             }
 
-            // FALLBACK PROTECTION: Populate from trending/daily recs if search yields no candidates
+            // FALLBACK PROTECTION: Populate from trending/daily recs if candidates yielded 0 winners
             if (resolvedWinners.length === 0) {
                 const fallbacks = [...(window.OCTAVE.trendingData?.tracks || []), ...(window.OCTAVE.dailyRecs?.tracks || [])];
                 for (const fb of fallbacks) {
@@ -467,7 +452,7 @@ window.fetchAutoDjBatch = async () => {
             if (resolvedWinners.length > 0 && window.OCTAVE && Array.isArray(window.OCTAVE.queue)) {
                 const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => (q.videoId && w.videoId && q.videoId === w.videoId) || (q.title && w.title && q.title.toLowerCase().trim() === w.title.toLowerCase().trim())));
                 window.OCTAVE.queue.push(...filteredWinners.map(w => ({
-                    videoId: w.videoId,
+                    videoId: w.videoId || null,
                     rbId: w.rbId || null,
                     title: w.title,
                     author: w.author,
