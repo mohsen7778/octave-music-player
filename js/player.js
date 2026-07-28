@@ -345,32 +345,38 @@ function handleTrackEnded() {
 }
 
 window.playNextLogic = () => {
-    if (window.OCTAVE.isTransitioning) return; 
-
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.OCTAVE.isNextTrackManual = false;
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else {
-        window.OCTAVE.isTransitioning = true;
+        // We are at the end of the queue: fetch Auto-DJ tracks
+        window.OCTAVE.isTransitioning = false; 
         const fpPlay = document.querySelector('#fp-play i');
         if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin';
 
-        window.fetchAutoDjBatch().then(() => {
-            window.OCTAVE.isTransitioning = false;
-            if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-                window.OCTAVE.isNextTrackManual = false;
-                window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-            } else {
+        if (window.fetchAutoDjBatch) {
+            window.fetchAutoDjBatch().then(() => {
+                window.OCTAVE.isTransitioning = false;
+                if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
+                    window.OCTAVE.isNextTrackManual = false;
+                    window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
+                } else {
+                    window.OCTAVE.isPlaying = false;
+                    updatePlayIcons('fa-solid fa-play');
+                    clearInterval(progressTimer);
+                }
+            }).catch(() => {
+                window.OCTAVE.isTransitioning = false;
                 window.OCTAVE.isPlaying = false;
                 updatePlayIcons('fa-solid fa-play');
                 clearInterval(progressTimer);
-            }
-        }).catch(() => {
+            });
+        } else {
             window.OCTAVE.isTransitioning = false;
             window.OCTAVE.isPlaying = false;
             updatePlayIcons('fa-solid fa-play');
             clearInterval(progressTimer);
-        });
+        }
     }
 };
 
@@ -491,8 +497,6 @@ function syncMediaSessionPosition() {
 }
 
 window.playTrackByIndex = async (index) => {
-    if (window.OCTAVE.isTransitioning) return; 
-
     if (index < 0 || index >= window.OCTAVE.queue.length) return;
     const track = window.OCTAVE.queue[index];
 
@@ -519,7 +523,7 @@ window.playTrackByIndex = async (index) => {
     window.OCTAVE.isTransitioning = true;
     window.OCTAVE.nextTrackPreloaded = false;
     window.OCTAVE.currentTrackErrorRetries = 0;
-    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 4000); 
+    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 3000); 
 
     clearInterval(progressTimer);
     window.OCTAVE.isPlaying = false;
@@ -581,10 +585,14 @@ window.playTrackByIndex = async (index) => {
     }).catch(() => {
         playViaIframe(track.videoId);
     });
+
+    // Proactively fetch upcoming tracks if we are approaching the end of queue
+    if (window.OCTAVE.queue.length - index <= 2 && typeof window.fetchAutoDjBatch === 'function') {
+        setTimeout(() => window.fetchAutoDjBatch(), 1000);
+    }
 };
 
 window.playTrack = async (track) => {
-    if (window.OCTAVE.isTransitioning) return; 
     if (!track) return;
 
     if (!track.videoId) {
@@ -619,8 +627,6 @@ window.playTrack = async (track) => {
 };
 
 window.playPrev = () => {
-    if (window.OCTAVE.isTransitioning) return; 
-
     let current = 0;
     if (YTP && typeof YTP.getCurrentTime === 'function') {
         current = YTP.getCurrentTime();
@@ -905,8 +911,6 @@ function initPlayerDOM() {
         document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
 
         document.getElementById('fp-next')?.addEventListener('click', () => {
-            if (window.OCTAVE.isTransitioning) return; 
-
             if (window.OCTAVE.currentIndex >= 0) {
                 const timeListened = Date.now() - window.OCTAVE.trackStartTime;
                 if (timeListened < 15000) { 
