@@ -344,7 +344,7 @@ function handleTrackEnded() {
     if (window.playNextLogic) window.playNextLogic();
 }
 
-window.playNextLogic = () => {
+window.playNextLogic = async () => {
     window.OCTAVE.isTransitioning = false; 
 
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
@@ -352,26 +352,19 @@ window.playNextLogic = () => {
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else {
         // We are at the end of the queue: fetch Auto-DJ tracks
-        const fpPlay = document.querySelector('#fp-play i');
-        if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin';
+        updatePlayIcons('fa-solid fa-spinner fa-spin');
 
         if (window.fetchAutoDjBatch) {
-            window.fetchAutoDjBatch().then(() => {
-                window.OCTAVE.isTransitioning = false;
-                if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
-                    window.OCTAVE.isNextTrackManual = false;
-                    window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
-                } else {
-                    window.OCTAVE.isPlaying = false;
-                    updatePlayIcons('fa-solid fa-play');
-                    clearInterval(progressTimer);
-                }
-            }).catch(() => {
-                window.OCTAVE.isTransitioning = false;
+            await window.fetchAutoDjBatch();
+            window.OCTAVE.isTransitioning = false;
+            if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
+                window.OCTAVE.isNextTrackManual = false;
+                window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
+            } else {
                 window.OCTAVE.isPlaying = false;
                 updatePlayIcons('fa-solid fa-play');
                 clearInterval(progressTimer);
-            });
+            }
         } else {
             window.OCTAVE.isTransitioning = false;
             window.OCTAVE.isPlaying = false;
@@ -528,7 +521,7 @@ window.playTrackByIndex = async (index) => {
     window.OCTAVE.isTransitioning = true;
     window.OCTAVE.nextTrackPreloaded = false;
     window.OCTAVE.currentTrackErrorRetries = 0;
-    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 2000); 
+    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 1500); 
 
     clearInterval(progressTimer);
     window.OCTAVE.isPlaying = false;
@@ -593,7 +586,7 @@ window.playTrackByIndex = async (index) => {
 
     // Proactively fetch upcoming tracks if we are approaching the end of queue
     if (window.OCTAVE.queue.length - index <= 2 && typeof window.fetchAutoDjBatch === 'function') {
-        setTimeout(() => window.fetchAutoDjBatch(), 1000);
+        setTimeout(() => window.fetchAutoDjBatch(), 200);
     }
 };
 
@@ -866,7 +859,12 @@ function seekToPosition(e, containerElement, isFinalSeek = true) {
     }
 }
 
+let playerDomInitialized = false;
+
 function initPlayerDOM() {
+    if (playerDomInitialized) return;
+    playerDomInitialized = true;
+
     try {
         if (window.OCTAVE.currentIndex === -1 && window.OCTAVE.recentPlayed.length > 0) {
             window.OCTAVE.queue = [window.OCTAVE.recentPlayed[0]];
