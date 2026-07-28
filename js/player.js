@@ -1,7 +1,3 @@
-// ========================================
-// FILE: js/player.js
-// ========================================
-
 // ============================================================
 // player.js Octave Universal iFrame Engine
 // Universal Instant Playback + On-the-fly Video ID Resolution
@@ -30,21 +26,20 @@ window.OCTAVE = {
     playlists: {},
     recentPlayed: [],
     recentSearches: [],
-    playStats: {}, 
+    playStats: {},
     activeTrackForOptions: null,
     dailyRecs: { timestamp: 0, tracks: [] },
     trendingData: { timestamp: 0, tracks: [] },
     artistCache: {},
     selectedFont: localStorage.getItem('octave_font') || 'Plus Jakarta Sans',
-    sessionHistory: [], 
+    sessionHistory: [],
     trackStartTime: 0,
-    isNextTrackManual: true, 
+    isNextTrackManual: true,
     activeTrackViewed: false,
     isDraggingProgress: false,
-    isTransitioning: false, 
+    // isTransitioning REMOVED — was causing double-click bug on next/prev
     nextTrackPreloaded: false,
     currentTrackErrorRetries: 0,
-
     trackDuration: 0,
     completionLogged: false,
     earlySkipLogged: false,
@@ -120,18 +115,18 @@ window.onLifecycleTrackStart = async (track) => {
 window.checkLifecycleCompletion = (currentTime, totalDuration) => {
     if (!window.OCTAVE.completionLogged && totalDuration > 0) {
         const percentPlayed = (currentTime / totalDuration) * 100;
-        
+
         if (percentPlayed >= 80 || currentTime >= 30) {
             window.OCTAVE.completionLogged = true;
             const currentTrack = window.OCTAVE.activeCanonicalTrack || window.OCTAVE.queue[window.OCTAVE.currentIndex];
-            
+
             if (currentTrack) {
                 console.log(`Octave Lifecycle: Track Completed -> "${currentTrack.title}"`);
-                
+
                 if (window.updateArtistStats && currentTrack.author) {
                     window.updateArtistStats(currentTrack.author, 'complete');
                 }
-                
+
                 if (window.updateTasteProfile && currentTrack.audioFeatures) {
                     window.updateTasteProfile(currentTrack.audioFeatures, currentTrack.author);
                 }
@@ -142,14 +137,14 @@ window.checkLifecycleCompletion = (currentTime, totalDuration) => {
 
 window.onLifecycleTrackSkip = () => {
     const timeListened = (Date.now() - window.OCTAVE.trackStartTime) / 1000;
-    
+
     if (timeListened < 15 && !window.OCTAVE.earlySkipLogged) {
         window.OCTAVE.earlySkipLogged = true;
         const currentTrack = window.OCTAVE.activeCanonicalTrack || window.OCTAVE.queue[window.OCTAVE.currentIndex];
-        
+
         if (currentTrack) {
             console.log(`Octave Lifecycle: Early Skip Penalty -> "${currentTrack.title}"`);
-            
+
             if (window.updateArtistStats && currentTrack.author) {
                 window.updateArtistStats(currentTrack.author, 'skip');
             }
@@ -178,7 +173,7 @@ window.saveCache = () => {
             playlists: window.OCTAVE.playlists,
             recentPlayed: window.OCTAVE.recentPlayed.slice(0, 50),
             recentSearches: window.OCTAVE.recentSearches.slice(0, 30),
-            playStats: window.OCTAVE.playStats, 
+            playStats: window.OCTAVE.playStats,
             queue: window.OCTAVE.queue.slice(0, 100),
             currentIndex: window.OCTAVE.currentIndex,
             dailyRecs: window.OCTAVE.dailyRecs,
@@ -333,7 +328,6 @@ async function playViaIframe(videoId) {
 
 function onYTS(e) {
     if (e.data === YT.PlayerState.PLAYING) {
-        window.OCTAVE.isTransitioning = false; 
         window.OCTAVE.isPlaying = true;
         updatePlayIcons('fa-solid fa-pause');
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
@@ -364,7 +358,7 @@ function handleTrackEnded() {
             if (window.OCTAVE.playStats[track.videoId]) window.OCTAVE.playStats[track.videoId].completes++;
         }
         window.saveCache();
-        
+
         if (window.checkLifecycleCompletion) {
             window.checkLifecycleCompletion(100, 100);
         }
@@ -373,8 +367,6 @@ function handleTrackEnded() {
 }
 
 window.playNextLogic = async () => {
-    window.OCTAVE.isTransitioning = false; 
-
     if (window.ensureQueueBuffer) window.ensureQueueBuffer();
 
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
@@ -386,7 +378,6 @@ window.playNextLogic = async () => {
 
         if (window.fetchAutoDjBatch) {
             await window.fetchAutoDjBatch();
-            window.OCTAVE.isTransitioning = false;
             if (window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
                 window.OCTAVE.isNextTrackManual = false;
                 window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
@@ -396,7 +387,6 @@ window.playNextLogic = async () => {
                 clearInterval(progressTimer);
             }
         } else {
-            window.OCTAVE.isTransitioning = false;
             window.OCTAVE.isPlaying = false;
             updatePlayIcons('fa-solid fa-play');
             clearInterval(progressTimer);
@@ -483,14 +473,12 @@ function updateMediaSession(track) {
 
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
-    navigator.mediaSession.setActionHandler('nexttrack', () => { 
-        window.OCTAVE.isTransitioning = false;
+    navigator.mediaSession.setActionHandler('nexttrack', () => {
         if (window.onLifecycleTrackSkip) window.onLifecycleTrackSkip();
-        window.playNextLogic(); 
+        window.playNextLogic();
     });
-    navigator.mediaSession.setActionHandler('previoustrack', () => { 
-        window.OCTAVE.isTransitioning = false;
-        window.playPrev(); 
+    navigator.mediaSession.setActionHandler('previoustrack', () => {
+        window.playPrev();
     });
 
     try {
@@ -548,10 +536,8 @@ window.playTrackByIndex = async (index) => {
         }
     }
 
-    window.OCTAVE.isTransitioning = true;
     window.OCTAVE.nextTrackPreloaded = false;
     window.OCTAVE.currentTrackErrorRetries = 0;
-    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 1000); 
 
     clearInterval(progressTimer);
     window.OCTAVE.isPlaying = false;
@@ -561,7 +547,7 @@ window.playTrackByIndex = async (index) => {
         }
     } catch (e) {}
 
-    updatePlayIcons('fa-solid fa-spinner fa-spin'); 
+    updatePlayIcons('fa-solid fa-spinner fa-spin');
 
     const miniProg = document.getElementById('mini-progress');
     const fpProg = document.getElementById('fp-progress-fill');
@@ -600,7 +586,6 @@ window.playTrackByIndex = async (index) => {
     window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => (t.videoId && track.videoId && t.videoId !== track.videoId) || t.title !== track.title)].slice(0, 50);
     window.saveCache();
 
-    // Instant Queue Buffer populator
     if (window.ensureQueueBuffer) window.ensureQueueBuffer();
 
     if (window.onLifecycleTrackStart) {
@@ -617,7 +602,6 @@ window.playTrackByIndex = async (index) => {
         playViaIframe(track.videoId);
     });
 
-    // Proactively fetch smart AI recommendations in background
     if (typeof window.fetchAutoDjBatch === 'function') {
         setTimeout(() => window.fetchAutoDjBatch(), 200);
     }
@@ -645,9 +629,9 @@ window.playTrack = async (track) => {
         }
     }
 
-    window.OCTAVE.isNextTrackManual = true; 
+    window.OCTAVE.isNextTrackManual = true;
     window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => (t.videoId && track.videoId && t.videoId !== track.videoId) || t.title !== track.title)];
-    
+
     const existIdx = window.OCTAVE.queue.findIndex(t => (t.videoId && track.videoId && t.videoId === track.videoId) || t.title === track.title);
     if (existIdx >= 0) {
         window.playTrackByIndex(existIdx);
@@ -659,8 +643,6 @@ window.playTrack = async (track) => {
 };
 
 window.playPrev = () => {
-    window.OCTAVE.isTransitioning = false; 
-
     if (window.OCTAVE.currentIndex > 0) {
         window.OCTAVE.isNextTrackManual = true;
         window.playTrackByIndex(window.OCTAVE.currentIndex - 1);
@@ -739,10 +721,10 @@ window.applyLiquidShadow = (imageSrc) => {
             const sampleSize = 5;
 
             const points = [
-                { x: Math.floor(w / 2), y: Math.floor(h / 2) },           
-                { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },        
-                { x: Math.floor(w * 0.85), y: Math.floor(h * 0.85) },     
-                { x: Math.floor(w * 0.15), y: Math.floor(h * 0.85) }      
+                { x: Math.floor(w / 2), y: Math.floor(h / 2) },
+                { x: Math.floor(w / 2), y: Math.floor(h * 0.15) },
+                { x: Math.floor(w * 0.85), y: Math.floor(h * 0.85) },
+                { x: Math.floor(w * 0.15), y: Math.floor(h * 0.85) }
             ];
 
             let r = 0, g = 0, b = 0, count = 0;
@@ -771,7 +753,7 @@ window.applyLiquidShadow = (imageSrc) => {
             }
 
             let gray = (r + g + b) / 3;
-            r = r + (r - gray) * 0.4; 
+            r = r + (r - gray) * 0.4;
             g = g + (g - gray) * 0.4;
             b = b + (b - gray) * 0.4;
 
@@ -921,7 +903,7 @@ function initPlayerDOM() {
             const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
             if (track) {
                 updatePlayerUI(track);
-                updateMediaSession(track); 
+                updateMediaSession(track);
             }
         }
 
@@ -956,11 +938,9 @@ function initPlayerDOM() {
         document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
 
         document.getElementById('fp-next')?.addEventListener('click', () => {
-            window.OCTAVE.isTransitioning = false; 
-
             if (window.OCTAVE.currentIndex >= 0) {
                 const timeListened = Date.now() - window.OCTAVE.trackStartTime;
-                if (timeListened < 15000) { 
+                if (timeListened < 15000) {
                     const id = window.OCTAVE.queue[window.OCTAVE.currentIndex].videoId;
                     if (id) {
                         window.initTrackStats(id);
@@ -969,7 +949,7 @@ function initPlayerDOM() {
                     window.saveCache();
                 }
             }
-            
+
             if (window.onLifecycleTrackSkip) {
                 window.onLifecycleTrackSkip();
             }
@@ -979,7 +959,6 @@ function initPlayerDOM() {
         });
 
         document.getElementById('fp-prev')?.addEventListener('click', () => {
-            window.OCTAVE.isTransitioning = false;
             window.playPrev();
         });
 
@@ -1000,7 +979,7 @@ function initPlayerDOM() {
             };
             const handleScrubMove = (e) => {
                 if (!window.OCTAVE.isDraggingProgress) return;
-                if (e.type === 'touchmove' && e.cancelable) e.preventDefault(); 
+                if (e.type === 'touchmove' && e.cancelable) e.preventDefault();
                 seekToPosition(e, fpProgContainer, false);
             };
             const handleScrubEnd = (e) => {
