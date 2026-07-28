@@ -345,12 +345,13 @@ function handleTrackEnded() {
 }
 
 window.playNextLogic = () => {
+    window.OCTAVE.isTransitioning = false; 
+
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.OCTAVE.isNextTrackManual = false;
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else {
         // We are at the end of the queue: fetch Auto-DJ tracks
-        window.OCTAVE.isTransitioning = false; 
         const fpPlay = document.querySelector('#fp-play i');
         if (fpPlay) fpPlay.className = 'fa-solid fa-spinner fa-spin';
 
@@ -460,10 +461,14 @@ function updateMediaSession(track) {
     navigator.mediaSession.setActionHandler('play', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('pause', () => { window.togglePlay(); });
     navigator.mediaSession.setActionHandler('nexttrack', () => { 
+        window.OCTAVE.isTransitioning = false;
         if (window.onLifecycleTrackSkip) window.onLifecycleTrackSkip();
         window.playNextLogic(); 
     });
-    navigator.mediaSession.setActionHandler('previoustrack', () => { window.playPrev(); });
+    navigator.mediaSession.setActionHandler('previoustrack', () => { 
+        window.OCTAVE.isTransitioning = false;
+        window.playPrev(); 
+    });
 
     try {
         navigator.mediaSession.setActionHandler('seekto', (details) => {
@@ -523,7 +528,7 @@ window.playTrackByIndex = async (index) => {
     window.OCTAVE.isTransitioning = true;
     window.OCTAVE.nextTrackPreloaded = false;
     window.OCTAVE.currentTrackErrorRetries = 0;
-    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 3000); 
+    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 2000); 
 
     clearInterval(progressTimer);
     window.OCTAVE.isPlaying = false;
@@ -627,16 +632,13 @@ window.playTrack = async (track) => {
 };
 
 window.playPrev = () => {
-    let current = 0;
-    if (YTP && typeof YTP.getCurrentTime === 'function') {
-        current = YTP.getCurrentTime();
-    }
+    window.OCTAVE.isTransitioning = false; 
 
-    if (current > 3) {
-        if (YTP) YTP.seekTo(0);
-    } else if (window.OCTAVE.currentIndex > 0) {
+    if (window.OCTAVE.currentIndex > 0) {
         window.OCTAVE.isNextTrackManual = true;
         window.playTrackByIndex(window.OCTAVE.currentIndex - 1);
+    } else if (YTP && typeof YTP.seekTo === 'function') {
+        YTP.seekTo(0);
     }
 };
 
@@ -911,6 +913,8 @@ function initPlayerDOM() {
         document.getElementById('fp-play')?.addEventListener('click', window.togglePlay);
 
         document.getElementById('fp-next')?.addEventListener('click', () => {
+            window.OCTAVE.isTransitioning = false; 
+
             if (window.OCTAVE.currentIndex >= 0) {
                 const timeListened = Date.now() - window.OCTAVE.trackStartTime;
                 if (timeListened < 15000) { 
@@ -931,7 +935,10 @@ function initPlayerDOM() {
             if (window.playNextLogic) window.playNextLogic();
         });
 
-        document.getElementById('fp-prev')?.addEventListener('click', window.playPrev);
+        document.getElementById('fp-prev')?.addEventListener('click', () => {
+            window.OCTAVE.isTransitioning = false;
+            window.playPrev();
+        });
 
         document.getElementById('mini-like-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
