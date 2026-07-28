@@ -358,129 +358,132 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
 // 5. MAIN AUTO-DJ ENGINE
 // ============================================================
 
-window.isFetchingBatch = false;
+window.activeFetchPromise = null;
 
 window.fetchAutoDjBatch = async () => {
-    if (window.isFetchingBatch) return;
-    window.isFetchingBatch = true;
+    if (window.activeFetchPromise) return window.activeFetchPromise;
 
-    try {
-        const octave = window.OCTAVE || {};
-        const liked = octave.liked || {};
-        const recentPlayed = octave.recentPlayed || [];
-        const queue = octave.queue || [];
-        const currentIndex = octave.currentIndex;
+    window.activeFetchPromise = (async () => {
+        try {
+            const octave = window.OCTAVE || {};
+            const liked = octave.liked || {};
+            const recentPlayed = octave.recentPlayed || [];
+            const queue = octave.queue || [];
+            const currentIndex = octave.currentIndex;
 
-        const currentTrack = currentIndex >= 0 ? queue[currentIndex] : (recentPlayed[0] || null);
+            const currentTrack = currentIndex >= 0 ? queue[currentIndex] : (recentPlayed[0] || null);
 
-        const seedSet = [];
-        if (currentTrack) seedSet.push(currentTrack);
-        const likedList = Object.values(liked);
-        if (likedList.length > 0) seedSet.push(likedList[Math.floor(Math.random() * likedList.length)]);
+            const seedSet = [];
+            if (currentTrack) seedSet.push(currentTrack);
+            const likedList = Object.values(liked);
+            if (likedList.length > 0) seedSet.push(likedList[Math.floor(Math.random() * likedList.length)]);
 
-        const seedRbIds = [];
-        for (const seed of seedSet) {
-            if (window.resolveTrackToRbId) {
-                const rbId = await window.resolveTrackToRbId(seed);
-                if (rbId) seedRbIds.push(rbId);
-            }
-        }
-
-        let currentAudioFeatures = null;
-        if (currentTrack && currentTrack.rbId) {
-            const featMap = window.resolveAudioFeaturesBatch ? await window.resolveAudioFeaturesBatch([currentTrack.rbId]) : {};
-            currentAudioFeatures = featMap[currentTrack.rbId] || null;
-        }
-
-        let candidates = [];
-        if (seedRbIds.length > 0 && window.resolveReccoCandidates) {
-            candidates = await window.resolveReccoCandidates(seedRbIds);
-        }
-
-        if (candidates.length < 5) {
+            const seedRbIds = [];
             for (const seed of seedSet) {
-                if (!seed.videoId) continue;
-                for (let i = 0; i < window.INVIDIOUS.length; i++) {
-                    const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-                    const rawUrl = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
-                    const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
-
-                    let fetched = false;
-                    for (const fetchUrl of urlsToTry) {
-                        try {
-                            const controller = new AbortController();
-                            const id = setTimeout(() => controller.abort(), 4000);
-                            const r = await fetch(fetchUrl, { signal: controller.signal });
-                            clearTimeout(id);
-                            if (r.ok) {
-                                const d = await r.json();
-                                if (d.recommendedVideos && d.recommendedVideos.length > 0) {
-                                    d.recommendedVideos.forEach(v => {
-                                        candidates.push({
-                                            videoId: v.videoId,
-                                            title: v.title,
-                                            author: v.author,
-                                            durationMs: (v.lengthSeconds || 0) * 1000
-                                        });
-                                    });
-                                    fetched = true;
-                                    break;
-                                }
-                            }
-                        } catch (e) { continue; }
-                    }
-                    if (fetched) break;
+                if (window.resolveTrackToRbId) {
+                    const rbId = await window.resolveTrackToRbId(seed);
+                    if (rbId) seedRbIds.push(rbId);
                 }
             }
-        }
 
-        const rankedCandidates = await runCandidateTournament(candidates, currentTrack, currentAudioFeatures);
-        const resolvedWinners = [];
-
-        for (const winner of rankedCandidates) {
-            if (winner.videoId) {
-                resolvedWinners.push(winner);
-            } else {
-                try {
-                    const searchResults = await window.performSearch(`${winner.title} ${winner.author || ''}`);
-                    if (searchResults && searchResults.length > 0) {
-                        const winnerTrack = searchResults[0];
-                        winnerTrack.rbId = winner.rbId;
-                        resolvedWinners.push(winnerTrack);
-                    }
-                } catch (e) {}
+            let currentAudioFeatures = null;
+            if (currentTrack && currentTrack.rbId) {
+                const featMap = window.resolveAudioFeaturesBatch ? await window.resolveAudioFeaturesBatch([currentTrack.rbId]) : {};
+                currentAudioFeatures = featMap[currentTrack.rbId] || null;
             }
-            if (resolvedWinners.length >= 5) break;
-        }
 
-        // FALLBACK PROTECTION: If candidates returned zero results, populate from trending or daily recs so queue NEVER dead-ends
-        if (resolvedWinners.length === 0) {
-            const fallbacks = [...(window.OCTAVE.trendingData?.tracks || []), ...(window.OCTAVE.dailyRecs?.tracks || [])];
-            for (const fb of fallbacks) {
-                if (fb && !resolvedWinners.some(w => w.title === fb.title)) {
-                    resolvedWinners.push(fb);
+            let candidates = [];
+            if (seedRbIds.length > 0 && window.resolveReccoCandidates) {
+                candidates = await window.resolveReccoCandidates(seedRbIds);
+            }
+
+            if (candidates.length < 5) {
+                for (const seed of seedSet) {
+                    if (!seed.videoId) continue;
+                    for (let i = 0; i < window.INVIDIOUS.length; i++) {
+                        const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
+                        const rawUrl = `${base}/api/v1/videos/${seed.videoId}?fields=recommendedVideos`;
+                        const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
+
+                        let fetched = false;
+                        for (const fetchUrl of urlsToTry) {
+                            try {
+                                const controller = new AbortController();
+                                const id = setTimeout(() => controller.abort(), 4000);
+                                const r = await fetch(fetchUrl, { signal: controller.signal });
+                                clearTimeout(id);
+                                if (r.ok) {
+                                    const d = await r.json();
+                                    if (d.recommendedVideos && d.recommendedVideos.length > 0) {
+                                        d.recommendedVideos.forEach(v => {
+                                            candidates.push({
+                                                videoId: v.videoId,
+                                                title: v.title,
+                                                author: v.author,
+                                                durationMs: (v.lengthSeconds || 0) * 1000
+                                            });
+                                        });
+                                        fetched = true;
+                                        break;
+                                    }
+                                }
+                            } catch (e) { continue; }
+                        }
+                        if (fetched) break;
+                    }
+                }
+            }
+
+            const rankedCandidates = await runCandidateTournament(candidates, currentTrack, currentAudioFeatures);
+            const resolvedWinners = [];
+
+            for (const winner of rankedCandidates) {
+                if (winner.videoId) {
+                    resolvedWinners.push(winner);
+                } else {
+                    try {
+                        const searchResults = await window.performSearch(`${winner.title} ${winner.author || ''}`);
+                        if (searchResults && searchResults.length > 0) {
+                            const winnerTrack = searchResults[0];
+                            winnerTrack.rbId = winner.rbId;
+                            resolvedWinners.push(winnerTrack);
+                        }
+                    } catch (e) {}
                 }
                 if (resolvedWinners.length >= 5) break;
             }
-        }
 
-        if (resolvedWinners.length > 0 && window.OCTAVE && Array.isArray(window.OCTAVE.queue)) {
-            const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => (q.videoId && w.videoId && q.videoId === w.videoId) || (q.title && w.title && q.title.toLowerCase().trim() === w.title.toLowerCase().trim())));
-            window.OCTAVE.queue.push(...filteredWinners.map(w => ({
-                videoId: w.videoId,
-                rbId: w.rbId || null,
-                title: w.title,
-                author: w.author,
-                thumb: w.videoId ? `https://i.ytimg.com/vi/${w.videoId}/hqdefault.jpg` : (w.thumb || '')
-            })));
-            if (typeof window.saveCache === 'function') window.saveCache();
-        }
+            // FALLBACK PROTECTION: Populate from trending/daily recs if search yields no candidates
+            if (resolvedWinners.length === 0) {
+                const fallbacks = [...(window.OCTAVE.trendingData?.tracks || []), ...(window.OCTAVE.dailyRecs?.tracks || [])];
+                for (const fb of fallbacks) {
+                    if (fb && !resolvedWinners.some(w => w.title === fb.title)) {
+                        resolvedWinners.push(fb);
+                    }
+                    if (resolvedWinners.length >= 5) break;
+                }
+            }
 
-    } catch (e) {
-        console.warn("Octave Alg Engine Error", e);
-    } finally {
-        window.isFetchingBatch = false;
-    }
+            if (resolvedWinners.length > 0 && window.OCTAVE && Array.isArray(window.OCTAVE.queue)) {
+                const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => (q.videoId && w.videoId && q.videoId === w.videoId) || (q.title && w.title && q.title.toLowerCase().trim() === w.title.toLowerCase().trim())));
+                window.OCTAVE.queue.push(...filteredWinners.map(w => ({
+                    videoId: w.videoId,
+                    rbId: w.rbId || null,
+                    title: w.title,
+                    author: w.author,
+                    thumb: w.videoId ? `https://i.ytimg.com/vi/${w.videoId}/hqdefault.jpg` : (w.thumb || '')
+                })));
+                if (typeof window.saveCache === 'function') window.saveCache();
+            }
+
+        } catch (e) {
+            console.warn("Octave Alg Engine Error", e);
+        } finally {
+            window.activeFetchPromise = null;
+        }
+    })();
+
+    return window.activeFetchPromise;
 };
 
 setTimeout(() => {
@@ -489,7 +492,7 @@ setTimeout(() => {
         window.playTrackByIndex = (index) => {
             originalPlayTrackByIndex(index);
             if (window.OCTAVE && window.OCTAVE.queue && (window.OCTAVE.queue.length - index <= 2)) {
-                setTimeout(() => window.fetchAutoDjBatch(), 800);
+                setTimeout(() => window.fetchAutoDjBatch(), 200);
             }
         };
     }
