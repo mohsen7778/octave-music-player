@@ -57,6 +57,34 @@ let activeEngine = window.AUDIO_ENGINE;
 
 console.log("Octave: Universal iFrame Engine restored. Instant playback & Lifecycle Wiring active.");
 
+// --- INSTANT 0ms QUEUE BUFFER ENGINE ---
+window.ensureQueueBuffer = () => {
+    if (!window.OCTAVE || !Array.isArray(window.OCTAVE.queue)) return;
+    const q = window.OCTAVE.queue;
+    const idx = window.OCTAVE.currentIndex >= 0 ? window.OCTAVE.currentIndex : 0;
+
+    if (q.length - idx <= 3) {
+        const pool = [
+            ...(window.OCTAVE.trendingData?.tracks || []),
+            ...(window.OCTAVE.dailyRecs?.tracks || []),
+            ...(window.OCTAVE.recentPlayed || [])
+        ];
+
+        for (const item of pool) {
+            if (item && item.title && !q.some(t => (t.videoId && item.videoId && t.videoId === item.videoId) || (t.title && item.title && t.title.toLowerCase().trim() === item.title.toLowerCase().trim()))) {
+                q.push({
+                    videoId: item.videoId || null,
+                    rbId: item.rbId || null,
+                    title: item.title,
+                    author: item.author || 'Artist',
+                    thumb: item.thumb || (item.videoId ? `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` : '')
+                });
+            }
+            if (q.length - idx >= 6) break;
+        }
+    }
+};
+
 // --- LIFECYCLE EVENT EMITTER & HOOKS ---
 
 window.onLifecycleTrackStart = async (track) => {
@@ -347,6 +375,8 @@ function handleTrackEnded() {
 window.playNextLogic = async () => {
     window.OCTAVE.isTransitioning = false; 
 
+    if (window.ensureQueueBuffer) window.ensureQueueBuffer();
+
     if (window.OCTAVE.currentIndex >= 0 && window.OCTAVE.currentIndex < window.OCTAVE.queue.length - 1) {
         window.OCTAVE.isNextTrackManual = false;
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
@@ -570,6 +600,9 @@ window.playTrackByIndex = async (index) => {
     window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => (t.videoId && track.videoId && t.videoId !== track.videoId) || t.title !== track.title)].slice(0, 50);
     window.saveCache();
 
+    // Instant Queue Buffer populator
+    if (window.ensureQueueBuffer) window.ensureQueueBuffer();
+
     if (window.onLifecycleTrackStart) {
         window.onLifecycleTrackStart(track);
     }
@@ -584,8 +617,8 @@ window.playTrackByIndex = async (index) => {
         playViaIframe(track.videoId);
     });
 
-    // Proactively fetch upcoming tracks if approaching end of queue
-    if (window.OCTAVE.queue.length - index <= 2 && typeof window.fetchAutoDjBatch === 'function') {
+    // Proactively fetch smart AI recommendations in background
+    if (typeof window.fetchAutoDjBatch === 'function') {
         setTimeout(() => window.fetchAutoDjBatch(), 200);
     }
 };
@@ -620,6 +653,7 @@ window.playTrack = async (track) => {
         window.playTrackByIndex(existIdx);
     } else {
         window.OCTAVE.queue.push(track);
+        if (window.ensureQueueBuffer) window.ensureQueueBuffer();
         window.playTrackByIndex(window.OCTAVE.queue.length - 1);
     }
 };
@@ -630,8 +664,19 @@ window.playPrev = () => {
     if (window.OCTAVE.currentIndex > 0) {
         window.OCTAVE.isNextTrackManual = true;
         window.playTrackByIndex(window.OCTAVE.currentIndex - 1);
-    } else if (YTP && typeof YTP.seekTo === 'function') {
-        YTP.seekTo(0);
+    } else {
+        if (window.OCTAVE.recentPlayed && window.OCTAVE.recentPlayed.length > 1) {
+            const prevTrack = window.OCTAVE.recentPlayed[1];
+            if (prevTrack && prevTrack.title !== window.OCTAVE.queue[0]?.title) {
+                window.OCTAVE.queue.unshift(prevTrack);
+                window.OCTAVE.currentIndex = 0;
+                window.playTrackByIndex(0);
+                return;
+            }
+        }
+        if (YTP && typeof YTP.seekTo === 'function') {
+            YTP.seekTo(0);
+        }
     }
 };
 
