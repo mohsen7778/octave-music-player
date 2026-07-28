@@ -521,7 +521,7 @@ window.playTrackByIndex = async (index) => {
     window.OCTAVE.isTransitioning = true;
     window.OCTAVE.nextTrackPreloaded = false;
     window.OCTAVE.currentTrackErrorRetries = 0;
-    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 1500); 
+    setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 1000); 
 
     clearInterval(progressTimer);
     window.OCTAVE.isPlaying = false;
@@ -584,7 +584,7 @@ window.playTrackByIndex = async (index) => {
         playViaIframe(track.videoId);
     });
 
-    // Proactively fetch upcoming tracks if we are approaching the end of queue
+    // Proactively fetch upcoming tracks if approaching end of queue
     if (window.OCTAVE.queue.length - index <= 2 && typeof window.fetchAutoDjBatch === 'function') {
         setTimeout(() => window.fetchAutoDjBatch(), 200);
     }
