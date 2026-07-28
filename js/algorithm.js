@@ -453,8 +453,19 @@ window.fetchAutoDjBatch = async () => {
             if (resolvedWinners.length >= 5) break;
         }
 
+        // FALLBACK PROTECTION: If candidates returned zero results, populate from trending or daily recs so queue NEVER dead-ends
+        if (resolvedWinners.length === 0) {
+            const fallbacks = [...(window.OCTAVE.trendingData?.tracks || []), ...(window.OCTAVE.dailyRecs?.tracks || [])];
+            for (const fb of fallbacks) {
+                if (fb && !resolvedWinners.some(w => w.title === fb.title)) {
+                    resolvedWinners.push(fb);
+                }
+                if (resolvedWinners.length >= 5) break;
+            }
+        }
+
         if (resolvedWinners.length > 0 && window.OCTAVE && Array.isArray(window.OCTAVE.queue)) {
-            const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => q.videoId === w.videoId || (q.title && q.title.toLowerCase().trim() === w.title.toLowerCase().trim())));
+            const filteredWinners = resolvedWinners.filter(w => !window.OCTAVE.queue.some(q => (q.videoId && w.videoId && q.videoId === w.videoId) || (q.title && w.title && q.title.toLowerCase().trim() === w.title.toLowerCase().trim())));
             window.OCTAVE.queue.push(...filteredWinners.map(w => ({
                 videoId: w.videoId,
                 rbId: w.rbId || null,
@@ -478,7 +489,7 @@ setTimeout(() => {
         window.playTrackByIndex = (index) => {
             originalPlayTrackByIndex(index);
             if (window.OCTAVE && window.OCTAVE.queue && (window.OCTAVE.queue.length - index <= 2)) {
-                setTimeout(() => window.fetchAutoDjBatch(), 1500);
+                setTimeout(() => window.fetchAutoDjBatch(), 800);
             }
         };
     }
