@@ -630,10 +630,19 @@ window.bindSearch = () => {
                 return;
             }
             
-            results.slice(0, 15).forEach(track => {
-                const el = document.createElement('div'); el.className = 'list-item';
+            // SPOTIFY-LIKE CONTEXT QUEUEING:
+            // Pass entire search results list to queue so Next button plays result #2, #3, etc.
+            results.slice(0, 15).forEach((track, idx) => {
+                const el = document.createElement('div'); 
+                el.className = 'list-item';
                 el.innerHTML = `<img src="${window.getSafeThumb(track)}" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;"><div class="list-info" style="cursor: pointer;"><div class="list-title">${window.escapeHTML(track.title)}</div><div class="list-subtitle">${window.escapeHTML(track.author)}</div></div>`;
-                el.addEventListener('click', () => window.playTrack(track));
+                
+                el.addEventListener('click', () => {
+                    window.OCTAVE.queue = [...results];
+                    window.OCTAVE.isNextTrackManual = true;
+                    window.playTrackByIndex(idx);
+                });
+                
                 resContainer.appendChild(el);
             });
         }, 500);
