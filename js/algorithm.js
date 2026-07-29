@@ -255,6 +255,26 @@ function evaluateNonMusicConfidence(title, author, durationMs) {
     return confidenceScore;
 }
 
+// Check if a candidate is just a cover/remix/alternate version of a track
+function isSameSongVersion(trackA, trackB) {
+    if (!trackA || !trackB || !trackA.title || !trackB.title) return false;
+
+    const normalizeTitle = (str) => {
+        return (str || '').toLowerCase()
+            .replace(/\(.*\)|\[.*\]/g, '') // remove brackets & parens like (Official Audio)
+            .replace(/ft\..*|feat\..*/g, '')
+            .replace(/\b(remix|mix|slowed|reverb|cover|acoustic|live|version|edit|extended|instrumental|karaoke|audio|video)\b/gi, '')
+            .replace(/[^a-z0-9]/g, '')
+            .trim();
+    };
+
+    const normA = normalizeTitle(trackA.title);
+    const normB = normalizeTitle(trackB.title);
+
+    if (!normA || !normB) return false;
+    return normA === normB || (normA.length > 5 && normB.length > 5 && (normA.includes(normB) || normB.includes(normA)));
+}
+
 async function runCandidateTournament(candidates, currentTrack, currentAudioFeatures) {
     if (!candidates || candidates.length === 0) return [];
 
@@ -275,6 +295,12 @@ async function runCandidateTournament(candidates, currentTrack, currentAudioFeat
     for (const cand of candidates) {
         if (!cand || !cand.title) continue;
         if (evaluateNonMusicConfidence(cand.title, cand.author, cand.durationMs) < 50) continue;
+
+        // HARD REJECT SAME SONG VERSIONS / DUPLICATES OF CURRENT TRACK
+        if (currentTrack && isSameSongVersion(currentTrack, cand)) {
+            console.log(`Octave Tournament: Hard Rejected candidate "${cand.title}" (duplicate/version of current track "${currentTrack.title}").`);
+            continue;
+        }
 
         let score = 0;
         const candFeat = candidateFeaturesMap[cand.rbId];
@@ -442,7 +468,7 @@ window.fetchAutoDjBatch = async () => {
             if (resolvedWinners.length === 0) {
                 const fallbacks = [...(window.OCTAVE.trendingData?.tracks || []), ...(window.OCTAVE.dailyRecs?.tracks || [])];
                 for (const fb of fallbacks) {
-                    if (fb && !resolvedWinners.some(w => w.title === fb.title)) {
+                    if (fb && !resolvedWinners.some(w => w.title === fb.title) && !isSameSongVersion(currentTrack, fb)) {
                         resolvedWinners.push(fb);
                     }
                     if (resolvedWinners.length >= 5) break;
