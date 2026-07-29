@@ -28,7 +28,6 @@ window.OCTAVE = {
     queue: [],
     currentIndex: -1,
     isPlaying: false,
-    userIntentPaused: false,
     liked: {},
     playlists: {},
     recentPlayed: [],
@@ -296,7 +295,7 @@ window.importVault = (event) => {
 // --- BRAVE BACKGROUND KEEP-ALIVE AUDIO ANCHOR ---
 const AUDIO = new Audio();
 AUDIO.loop = true;
-AUDIO.volume = 0.01; // Keep audio pipe active without audible collision
+AUDIO.volume = 0.01;
 const SILENT_MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OS4yNwAAAAAAAAAAAAAAAAQAAgPIAAAAAAAAAAABIQQAAAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwA8gAAAAAAgAAAEH//MUZBAAAAGkAAAAAAAAA0gAAAAAA//MUZCQAAAGkAAAAAAAAA0gAAAAAA//MUZGQAAAGkAAAAAAAAA0gAAAAAA";
 
 let audioUnlocked = false;
@@ -319,16 +318,6 @@ function unlockAudioEngine() {
 }
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
-
-// Page Visibility listener: Re-assert audio keep-alive when app is backgrounded
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden && window.OCTAVE.isPlaying && !window.OCTAVE.userIntentPaused) {
-        AUDIO.play().catch(() => {});
-        if (YTP && typeof YTP.playVideo === 'function') {
-            YTP.playVideo();
-        }
-    }
-});
 
 // --- YOUTUBE IFRAME ENGINE ---
 let YTP = null;
@@ -379,23 +368,12 @@ function onYTS(e) {
     if (e.data === YT.PlayerState.PLAYING) {
         window.OCTAVE.isTransitioning = false; 
         window.OCTAVE.isPlaying = true;
-        window.OCTAVE.userIntentPaused = false;
         AUDIO.play().catch(() => {});
         updatePlayIcons('fa-solid fa-pause');
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
         startProgressTracking();
         syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
-        // INTERCEPT OS BACKGROUND AUTO-PAUSE: If user didn't intentionally pause, resume immediately
-        if (!window.OCTAVE.userIntentPaused && window.OCTAVE.isPlaying) {
-            console.log("Octave KeepAlive: Background auto-pause intercepted, re-asserting playback...");
-            AUDIO.play().catch(() => {});
-            if (YTP && typeof YTP.playVideo === 'function') {
-                YTP.playVideo();
-            }
-            return;
-        }
-
         window.OCTAVE.isPlaying = false;
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
         const fpIcon = document.querySelector('#fp-play i');
@@ -430,7 +408,6 @@ function handleTrackEnded() {
 
 window.playNextLogic = async () => {
     window.OCTAVE.isTransitioning = false; 
-    window.OCTAVE.userIntentPaused = false;
 
     if (window.ensureQueueBuffer) window.ensureQueueBuffer();
 
@@ -473,14 +450,12 @@ window.togglePlay = () => {
 
     ytReadyPromise.then(() => {
         if (window.OCTAVE.isPlaying) {
-            window.OCTAVE.userIntentPaused = true;
             window.OCTAVE.isPlaying = false;
             YTP.pauseVideo();
             try { AUDIO.pause(); } catch(e) {}
             updatePlayIcons('fa-solid fa-play');
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
         } else {
-            window.OCTAVE.userIntentPaused = false;
             window.OCTAVE.isPlaying = true;
             AUDIO.src = SILENT_MP3;
             AUDIO.play().catch(() => {});
@@ -547,22 +522,18 @@ function updateMediaSession(track) {
     });
 
     navigator.mediaSession.setActionHandler('play', () => { 
-        window.OCTAVE.userIntentPaused = false;
         window.togglePlay(); 
     });
     navigator.mediaSession.setActionHandler('pause', () => { 
-        window.OCTAVE.userIntentPaused = true;
         window.togglePlay(); 
     });
     navigator.mediaSession.setActionHandler('nexttrack', () => { 
         window.OCTAVE.isTransitioning = false;
-        window.OCTAVE.userIntentPaused = false;
         if (window.onLifecycleTrackSkip) window.onLifecycleTrackSkip();
         window.playNextLogic(); 
     });
     navigator.mediaSession.setActionHandler('previoustrack', () => { 
         window.OCTAVE.isTransitioning = false;
-        window.OCTAVE.userIntentPaused = false;
         window.playPrev(); 
     });
 
@@ -622,7 +593,6 @@ window.playTrackByIndex = async (index) => {
     }
 
     window.OCTAVE.isTransitioning = true;
-    window.OCTAVE.userIntentPaused = false;
     window.OCTAVE.nextTrackPreloaded = false;
     window.OCTAVE.currentTrackErrorRetries = 0;
     setTimeout(() => { window.OCTAVE.isTransitioning = false; }, 1000); 
@@ -720,7 +690,6 @@ window.playTrack = async (track) => {
     }
 
     window.OCTAVE.isNextTrackManual = true; 
-    window.OCTAVE.userIntentPaused = false;
     window.OCTAVE.recentSearches = [track, ...window.OCTAVE.recentSearches.filter(t => (t.videoId && track.videoId && t.videoId !== track.videoId) || t.title !== track.title)];
     
     const existIdx = window.OCTAVE.queue.findIndex(t => (t.videoId && track.videoId && t.videoId === track.videoId) || t.title === track.title);
@@ -735,7 +704,6 @@ window.playTrack = async (track) => {
 
 window.playPrev = () => {
     window.OCTAVE.isTransitioning = false; 
-    window.OCTAVE.userIntentPaused = false;
 
     if (window.OCTAVE.currentIndex > 0) {
         window.OCTAVE.isNextTrackManual = true;
@@ -760,7 +728,6 @@ window.playPlaylist = (plName) => {
     const pl = window.OCTAVE.playlists[plName];
     if (pl && pl.length > 0) {
         window.OCTAVE.isNextTrackManual = true;
-        window.OCTAVE.userIntentPaused = false;
         window.OCTAVE.queue = [...pl];
         window.playTrackByIndex(0);
     }
@@ -1034,7 +1001,6 @@ function initPlayerDOM() {
 
         document.getElementById('fp-next')?.addEventListener('click', () => {
             window.OCTAVE.isTransitioning = false; 
-            window.OCTAVE.userIntentPaused = false;
 
             if (window.OCTAVE.currentIndex >= 0) {
                 const timeListened = Date.now() - window.OCTAVE.trackStartTime;
@@ -1058,7 +1024,6 @@ function initPlayerDOM() {
 
         document.getElementById('fp-prev')?.addEventListener('click', () => {
             window.OCTAVE.isTransitioning = false;
-            window.OCTAVE.userIntentPaused = false;
             window.playPrev();
         });
 
