@@ -4,7 +4,7 @@
 
 // ============================================================
 // app.js — Octave Full Flagship Engine
-// Resilient Multi-Node Search Engine & Lyrics/Artist Pipeline
+// Resilient Multi-Node Search Engine & Primary Artist Extraction
 // ============================================================
 
 (function() {
@@ -54,6 +54,14 @@ window.cleanArtistString = (artist) => {
         .trim();
 };
 
+// Extracts the primary artist from collaborative strings (e.g., "Shakira & Burna Boy" -> "Shakira")
+window.getPrimaryArtist = (artist) => {
+    if (!artist) return '';
+    const cleaned = window.cleanArtistString(artist);
+    const parts = cleaned.split(/\s*(?:&|,|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\band\b)\s*/i);
+    return parts[0] ? parts[0].trim() : cleaned;
+};
+
 window.cleanTitleString = (title) => {
     if (!title) return '';
     return title
@@ -80,7 +88,7 @@ window.saveLyricsCache = () => {
     try {
         const keys = Object.keys(window.OCTAVE_LYRICS);
         if (keys.length > 250) {
-            delete window.OCTAVE_LYRICS[keys[0]]; // Prune oldest to save storage space
+            delete window.OCTAVE_LYRICS[keys[0]];
         }
         localStorage.setItem('octave_lyrics_cache', JSON.stringify(window.OCTAVE_LYRICS));
     } catch(e) {}
@@ -102,9 +110,9 @@ async function fetchWithTimeout(url, timeoutMs = 3000) {
 window.fetchLyrics = async (artist, title) => {
     if (!title) return '<div class="empty-state-text">Track information missing.</div>';
     
-    const cleanArtist = window.cleanArtistString(artist);
+    const primaryArtist = window.getPrimaryArtist(artist);
     const cleanTitle = window.cleanTitleString(title);
-    const cacheKey = `${cleanArtist.toLowerCase()}::${cleanTitle.toLowerCase()}`;
+    const cacheKey = `${primaryArtist.toLowerCase()}::${cleanTitle.toLowerCase()}`;
 
     // 0. Instant Local Cache Hit (0ms)
     if (window.OCTAVE_LYRICS[cacheKey]) {
@@ -113,49 +121,49 @@ window.fetchLyrics = async (artist, title) => {
 
     let foundLyrics = null;
 
-    // 1. Lyrica Multi-Source Public Aggregator
+    // 1. LRCLIB Search Query (Handles features best)
     try {
-        const lyricaData = await fetchWithTimeout(`https://wilooper-lyrica.hf.space/lyrics/?artist=${encodeURIComponent(cleanArtist)}&song=${encodeURIComponent(cleanTitle)}`, 3000);
-        if (lyricaData?.data?.lyrics) {
-            foundLyrics = lyricaData.data.lyrics;
+        const query = `${cleanTitle} ${primaryArtist}`.trim();
+        const lrcSearch = await fetchWithTimeout(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`, 3000);
+        if (Array.isArray(lrcSearch) && lrcSearch.length > 0) {
+            foundLyrics = lrcSearch[0].plainLyrics || lrcSearch[0].syncedLyrics;
         }
     } catch(e) {}
 
-    // 2. TheAudioDB API
-    if (!foundLyrics && cleanArtist) {
+    // 2. Lyrica Multi-Source Public Aggregator
+    if (!foundLyrics) {
         try {
-            const adbData = await fetchWithTimeout(`https://www.theaudiodb.com/api/v1/json/123/searchtrack.php?s=${encodeURIComponent(cleanArtist)}&t=${encodeURIComponent(cleanTitle)}`, 3000);
+            const lyricaData = await fetchWithTimeout(`https://wilooper-lyrica.hf.space/lyrics/?artist=${encodeURIComponent(primaryArtist)}&song=${encodeURIComponent(cleanTitle)}`, 3000);
+            if (lyricaData?.data?.lyrics) {
+                foundLyrics = lyricaData.data.lyrics;
+            }
+        } catch(e) {}
+    }
+
+    // 3. TheAudioDB API
+    if (!foundLyrics && primaryArtist) {
+        try {
+            const adbData = await fetchWithTimeout(`https://www.theaudiodb.com/api/v1/json/123/searchtrack.php?s=${encodeURIComponent(primaryArtist)}&t=${encodeURIComponent(cleanTitle)}`, 3000);
             if (adbData?.track?.[0]?.strTrackLyrics) {
                 foundLyrics = adbData.track[0].strTrackLyrics;
             }
         } catch(e) {}
     }
 
-    // 3. LRCLIB Direct Lookup
+    // 4. LRCLIB Direct Lookup
     if (!foundLyrics) {
         try {
-            const lrcData = await fetchWithTimeout(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(cleanArtist)}&track_name=${encodeURIComponent(cleanTitle)}`, 3000);
+            const lrcData = await fetchWithTimeout(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(primaryArtist)}&track_name=${encodeURIComponent(cleanTitle)}`, 3000);
             if (lrcData?.plainLyrics || lrcData?.syncedLyrics) {
                 foundLyrics = lrcData.plainLyrics || lrcData.syncedLyrics;
             }
         } catch(e) {}
     }
 
-    // 4. LRCLIB Search Fallback
-    if (!foundLyrics) {
-        try {
-            const query = `${cleanTitle} ${cleanArtist}`.trim();
-            const lrcSearch = await fetchWithTimeout(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`, 3000);
-            if (Array.isArray(lrcSearch) && lrcSearch.length > 0) {
-                foundLyrics = lrcSearch[0].plainLyrics || lrcSearch[0].syncedLyrics;
-            }
-        } catch(e) {}
-    }
-
     // 5. Lyrics.ovh Fallback
-    if (!foundLyrics && cleanArtist) {
+    if (!foundLyrics && primaryArtist) {
         try {
-            const ovhData = await fetchWithTimeout(`https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`, 3000);
+            const ovhData = await fetchWithTimeout(`https://api.lyrics.ovh/v1/${encodeURIComponent(primaryArtist)}/${encodeURIComponent(cleanTitle)}`, 3000);
             if (ovhData?.lyrics) {
                 foundLyrics = ovhData.lyrics;
             }
@@ -173,7 +181,8 @@ window.fetchLyrics = async (artist, title) => {
 
 // --- ARTIST PROFILE & METADATA PIPELINE ---
 window.fetchFullArtistProfile = async (artistName) => {
-    const cleanName = window.cleanArtistString(artistName || 'Unknown Artist');
+    // Extract primary artist so "Shakira & Burna Boy" resolves to "Shakira"
+    const cleanName = window.getPrimaryArtist(artistName || 'Unknown Artist');
     
     if (window.OCTAVE && window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanName]) {
         return window.OCTAVE.artistCache[cleanName];
