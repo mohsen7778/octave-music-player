@@ -423,7 +423,7 @@ window.fetchAutoDjBatch = async () => {
                 candidates = await window.resolveReccoCandidates(seedRbIds);
             }
 
-            // CLEAN MUSIC SOURCE: If candidate seeds return few results, pull strictly from Apple Music Top 50 API
+            // CLEAN MUSIC SOURCE: If candidate seeds return few results, pull strictly from iTunes Top Songs RSS
             if (candidates.length < 5) {
                 try {
                     const r = await fetch(`https://itunes.apple.com/us/rss/topsongs/limit=50/json`);
@@ -587,23 +587,29 @@ window.fetchDailyRecommendations = async () => {
 };
 
 // --- TRENDING MUSIC CHARTS ---
-window.fetchTrendingMusic = async () => {
+window.fetchTrendingMusic = async (forceRefresh = false) => {
     const trendingGrid = document.getElementById('home-trending-grid');
     if (!trendingGrid) return;
 
     const now = Date.now();
-    const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+    const SIX_HOURS = 6 * 60 * 60 * 1000;
 
-    if (window.OCTAVE && window.OCTAVE.trendingData && window.OCTAVE.trendingData.tracks && window.OCTAVE.trendingData.tracks.length > 0) {
-        if (now - window.OCTAVE.trendingData.timestamp < THREE_DAYS) {
+    // Purge legacy cache containing YouTube videoIds or expired timestamps
+    if (!forceRefresh && window.OCTAVE && window.OCTAVE.trendingData && Array.isArray(window.OCTAVE.trendingData.tracks) && window.OCTAVE.trendingData.tracks.length > 0) {
+        const tracks = window.OCTAVE.trendingData.tracks;
+        const isLegacyCache = tracks.some(t => t.videoId !== null && t.videoId !== undefined);
+        
+        if (!isLegacyCache && (now - window.OCTAVE.trendingData.timestamp < SIX_HOURS)) {
             if (typeof window.renderTrendingTracks === 'function') {
-                window.renderTrendingTracks(window.OCTAVE.trendingData.tracks, trendingGrid);
+                window.renderTrendingTracks(tracks, trendingGrid);
             }
             return;
         }
     }
 
-    // 1. Official iTunes Top 50 Music Feed (100% Music Chart, 0% Random YouTube Videos)
+    trendingGrid.innerHTML = '<div style="color: var(--text-secondary); font-size: 13px; padding-bottom: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading charts...</div>';
+
+    // 1. iTunes RSS Feed (Top 50 Songs - 100% Verified Clean Music Chart)
     try {
         const r = await fetch(`https://itunes.apple.com/us/rss/topsongs/limit=50/json`);
         if (r.ok) {
@@ -634,7 +640,7 @@ window.fetchTrendingMusic = async () => {
 
     // 2. Apple Marketing Tools RSS Fallback
     try {
-        const r = await fetch(`https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json?_t=${Date.now()}`, { cache: 'no-store' });
+        const r = await fetch(`https://rss.marketingtools.apple.com/api/v2/us/music/most-played/50/songs.json`);
         if (r.ok) {
             const d = await r.json();
             if (d.feed && d.feed.results && d.feed.results.length > 0) {
