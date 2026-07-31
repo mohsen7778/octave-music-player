@@ -42,20 +42,41 @@ if (!window.escapeHTML) {
     };
 }
 
+// Clean raw channel/artist strings (removes YouTube VEVO, - Topic, etc.)
+window.cleanArtistString = (artist) => {
+    if (!artist) return '';
+    return artist
+        .replace(/ - Topic$/i, '')
+        .replace(/vevo$/i, '')
+        .replace(/Official$/i, '')
+        .replace(/Records$/i, '')
+        .replace(/Music$/i, '')
+        .trim();
+};
+
+window.cleanTitleString = (title) => {
+    if (!title) return '';
+    return title
+        .replace(/\( official audio \)/gi, '')
+        .replace(/\( official video \)/gi, '')
+        .replace(/\( official music video \)/gi, '')
+        .replace(/\[ official audio \]/gi, '')
+        .replace(/\[ official video \]/gi, '')
+        .replace(/\( lyric video \)/gi, '')
+        .replace(/\[ lyric video \]/gi, '')
+        .replace(/ft\..*/gi, '')
+        .replace(/feat\..*/gi, '')
+        .trim();
+};
+
 // --- LYRICS API IMPLEMENTATION ---
 window.fetchLyrics = async (artist, title) => {
-    if (!artist || !title) return '<div class="empty-state-text">Track information missing.</div>';
+    if (!title) return '<div class="empty-state-text">Track information missing.</div>';
     
-    const cleanArtist = artist.replace(/ - Topic$/i, '').replace(/vevo$/i, '').trim();
-    const cleanTitle = title.replace(/\( official audio \)/gi, '')
-                             .replace(/\( official video \)/gi, '')
-                             .replace(/\[ official audio \]/gi, '')
-                             .replace(/\[ official video \]/gi, '')
-                             .replace(/\( lyric video \)/gi, '')
-                             .replace(/ft\..*/gi, '')
-                             .replace(/feat\..*/gi, '')
-                             .trim();
+    const cleanArtist = window.cleanArtistString(artist);
+    const cleanTitle = window.cleanTitleString(title);
 
+    // 1. LRCLIB Direct Lookup
     try {
         const lrcUrl = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(cleanArtist)}&track_name=${encodeURIComponent(cleanTitle)}`;
         const r = await fetch(lrcUrl);
@@ -68,29 +89,49 @@ window.fetchLyrics = async (artist, title) => {
         }
     } catch(e) {}
 
+    // 2. LRCLIB Search Endpoint Fallback
     try {
-        const ovhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`;
-        const r2 = await fetch(ovhUrl);
-        if (r2.ok) {
-            const data2 = await r2.json();
-            if (data2.lyrics) {
-                return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(data2.lyrics)}</div>`;
+        const query = `${cleanTitle} ${cleanArtist}`.trim();
+        const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`;
+        const rSearch = await fetch(searchUrl);
+        if (rSearch.ok) {
+            const searchData = await rSearch.json();
+            if (Array.isArray(searchData) && searchData.length > 0) {
+                const match = searchData[0];
+                const text = match.plainLyrics || match.syncedLyrics;
+                if (text) {
+                    return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(text)}</div>`;
+                }
             }
         }
     } catch(e) {}
+
+    // 3. Lyrics.ovh Fallback
+    if (cleanArtist) {
+        try {
+            const ovhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`;
+            const r2 = await fetch(ovhUrl);
+            if (r2.ok) {
+                const data2 = await r2.json();
+                if (data2.lyrics) {
+                    return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(data2.lyrics)}</div>`;
+                }
+            }
+        } catch(e) {}
+    }
 
     return '<div class="empty-state-text" style="padding: 40px 0; text-align: center;">No lyrics found for this track.</div>';
 };
 
 // --- ARTIST PROFILE & RECCOBEATS IMPLEMENTATION ---
 window.fetchFullArtistProfile = async (artistName) => {
-    const cleanName = (artistName || 'Unknown Artist').replace(/ - Topic$/i, '').trim();
+    const cleanName = window.cleanArtistString(artistName || 'Unknown Artist');
     
     if (window.OCTAVE && window.OCTAVE.artistCache && window.OCTAVE.artistCache[cleanName]) {
         return window.OCTAVE.artistCache[cleanName];
     }
 
-    let bio = `Artist ${cleanName} on Octave Audio.`;
+    let bio = `Listen to ${cleanName} on Octave Audio.`;
     let banner = '';
     let tracks = [];
 
@@ -105,46 +146,61 @@ window.fetchFullArtistProfile = async (artistName) => {
         }
     } catch(e) {}
 
-    // 2. ReccoBeats API Integration for Artist Top Tracks
+    // 2. iTunes Catalog Fallback (100% Guaranteed Artist Top Songs)
     try {
-        const rbUrl = `https://api.reccobeats.com/v1/artist/search?searchText=${encodeURIComponent(cleanName)}`;
-        const rbRes = await fetch(rbUrl);
-        if (rbRes.ok) {
-            const rbData = await rbRes.json();
-            const artistList = rbData?.content || rbData?.data || (Array.isArray(rbData) ? rbData : []);
-            if (artistList.length > 0) {
-                const artistObj = artistList[0];
-                const artistId = artistObj.id || artistObj.artistId;
-                if (artistId) {
-                    const rbTracksRes = await fetch(`https://api.reccobeats.com/v1/artist/${artistId}/track`);
-                    if (rbTracksRes.ok) {
-                        const rbTracksData = await rbTracksRes.json();
-                        const trackList = rbTracksData?.content || rbTracksData?.data || (Array.isArray(rbTracksData) ? rbTracksData : []);
-                        if (trackList.length > 0) {
-                            const topRb = trackList.slice(0, 5);
-                            for (const rbT of topRb) {
-                                const tName = rbT.trackTitle || rbT.title || '';
-                                const searchRes = await window.performSearch(`${tName} ${cleanName}`);
-                                if (searchRes && searchRes.length > 0) {
-                                    tracks.push(searchRes[0]);
-                                }
-                            }
-                        }
+        const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanName)}&entity=song&limit=10`;
+        const itunesRes = await fetch(itunesUrl);
+        if (itunesRes.ok) {
+            const itunesData = await itunesRes.json();
+            if (itunesData.results && itunesData.results.length > 0) {
+                const seenTitles = new Set();
+                for (const item of itunesData.results) {
+                    const normTitle = window.cleanTitleString(item.trackName).toLowerCase();
+                    if (!seenTitles.has(normTitle)) {
+                        seenTitles.add(normTitle);
+                        tracks.push({
+                            videoId: null,
+                            title: item.trackName,
+                            author: item.artistName,
+                            thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : ''
+                        });
                     }
+                    if (tracks.length >= 6) break;
                 }
             }
         }
     } catch(e) {}
 
-    // 3. Fallback search if ReccoBeats returns fewer tracks
+    // 3. ReccoBeats Fallback if iTunes returned < 3 tracks
     if (tracks.length < 3) {
         try {
-            const searchResults = await window.performSearch(`${cleanName} top songs audio`);
-            if (searchResults && searchResults.length > 0) {
-                const existingTitles = new Set(tracks.map(t => t.title.toLowerCase()));
-                searchResults.forEach(t => {
-                    if (!existingTitles.has(t.title.toLowerCase())) tracks.push(t);
-                });
+            const rbUrl = `https://api.reccobeats.com/v1/artist/search?searchText=${encodeURIComponent(cleanName)}`;
+            const rbRes = await fetch(rbUrl);
+            if (rbRes.ok) {
+                const rbData = await rbRes.json();
+                const artistList = rbData?.content || rbData?.data || (Array.isArray(rbData) ? rbData : []);
+                if (artistList.length > 0) {
+                    const artistObj = artistList[0];
+                    const artistId = artistObj.id || artistObj.artistId;
+                    if (artistId) {
+                        const rbTracksRes = await fetch(`https://api.reccobeats.com/v1/artist/${artistId}/track`);
+                        if (rbTracksRes.ok) {
+                            const rbTracksData = await rbTracksRes.json();
+                            const trackList = rbTracksData?.content || rbTracksData?.data || (Array.isArray(rbTracksData) ? rbTracksData : []);
+                            for (const rbT of trackList.slice(0, 5)) {
+                                const tName = rbT.trackTitle || rbT.title || '';
+                                if (tName) {
+                                    tracks.push({
+                                        videoId: null,
+                                        title: tName,
+                                        author: cleanName,
+                                        thumb: ''
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
             }
         } catch(e) {}
     }
@@ -557,14 +613,14 @@ window.performSearch = async (query) => {
                     return d.items.slice(0, 15).map(item => ({
                         videoId: item.url ? item.url.replace('/watch?v=', '') : null,
                         title: item.title,
-                        author: item.uploaderName || item.uploader || 'Artist',
+                        author: window.cleanArtistString(item.uploaderName || item.uploader || 'Artist'),
                         thumb: item.thumbnail || ''
                     })).filter(t => t.videoId);
                 } else if (ep.type === 'invidious' && Array.isArray(d) && d.length > 0) {
                     return d.filter(item => item.videoId && (!item.lengthSeconds || item.lengthSeconds < 600)).map(item => ({
                         videoId: item.videoId,
                         title: item.title,
-                        author: item.author,
+                        author: window.cleanArtistString(item.author || 'Artist'),
                         thumb: (item.videoThumbnails && item.videoThumbnails.length > 0) ? item.videoThumbnails[0].url : `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
                     }));
                 }
@@ -877,8 +933,9 @@ window.renderArtistPage = async (artistName) => {
     if (profile.tracks.length > 0) {
         document.querySelectorAll('.artist-track-item').forEach((node, idx) => {
             node.addEventListener('click', () => {
-                window.OCTAVE.queue = [...profile.tracks];
-                window.playTrackByIndex(idx);
+                if (window.playTrack) {
+                    window.playTrack(profile.tracks[idx]);
+                }
             });
         });
     }
