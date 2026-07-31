@@ -261,7 +261,7 @@ function isSameSongVersion(trackA, trackB) {
 
     const normalizeTitle = (str) => {
         return (str || '').toLowerCase()
-            .replace(/\(.*\)|\[.*\]/g, '') // remove brackets & parens like (Official Audio)
+            .replace(/\(.*\)|\[.*\]/g, '') // remove brackets & parens
             .replace(/ft\..*|feat\..*/g, '')
             .replace(/\b(remix|mix|slowed|reverb|cover|acoustic|live|version|edit|extended|instrumental|karaoke|audio|video)\b/gi, '')
             .replace(/[^a-z0-9]/g, '')
@@ -426,20 +426,18 @@ window.fetchAutoDjBatch = async () => {
             // CLEAN MUSIC SOURCE: If candidate seeds return few results, pull strictly from Apple Music Top 50 API
             if (candidates.length < 5) {
                 try {
-                    const r = await fetch(`https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json?_t=${Date.now()}`, { cache: 'no-store' });
+                    const r = await fetch(`https://itunes.apple.com/us/rss/topsongs/limit=50/json`);
                     if (r.ok) {
                         const d = await r.json();
-                        if (d.feed && d.feed.results && d.feed.results.length > 0) {
-                            const top50 = d.feed.results;
-                            for (const item of top50) {
-                                candidates.push({
-                                    videoId: null,
-                                    title: item.name,
-                                    author: item.artistName,
-                                    thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : '',
-                                    durationMs: 200000
-                                });
-                            }
+                        const entries = d.feed?.entry || [];
+                        for (const item of entries) {
+                            candidates.push({
+                                videoId: null,
+                                title: item['im:name']?.label || '',
+                                author: item['im:artist']?.label || '',
+                                thumb: item['im:image']?.[2]?.label || '',
+                                durationMs: 200000
+                            });
                         }
                     }
                 } catch (e) {}
@@ -541,35 +539,19 @@ window.fetchDailyRecommendations = async () => {
     }
 
     if (candidateList.length === 0) {
-        for (let i = 0; i < window.INVIDIOUS.length; i++) {
-            const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-            const rawUrl = `${base}/api/v1/popular?videoCategory=10`;
-            const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
-
-            let fetched = false;
-            for (const fetchUrl of urlsToTry) {
-                try {
-                    const controller = new AbortController();
-                    const id = setTimeout(() => controller.abort(), 4000);
-                    const r = await fetch(fetchUrl, { signal: controller.signal });
-                    clearTimeout(id);
-                    if (r.ok) {
-                        const d = await r.json();
-                        if (Array.isArray(d) && d.length > 0) {
-                            candidateList = d.map(v => ({
-                                videoId: v.videoId,
-                                title: v.title,
-                                author: v.author,
-                                durationMs: (v.lengthSeconds || 0) * 1000
-                            }));
-                            fetched = true;
-                            break;
-                        }
-                    }
-                } catch (e) { continue; }
+        try {
+            const r = await fetch(`https://itunes.apple.com/us/rss/topsongs/limit=20/json`);
+            if (r.ok) {
+                const d = await r.json();
+                const entries = d.feed?.entry || [];
+                candidateList = entries.map(v => ({
+                    videoId: null,
+                    title: v['im:name']?.label || '',
+                    author: v['im:artist']?.label || '',
+                    durationMs: 200000
+                }));
             }
-            if (fetched) break;
-        }
+        } catch(e) {}
     }
 
     const ranked = await runCandidateTournament(candidateList, null, null);
@@ -621,6 +603,36 @@ window.fetchTrendingMusic = async () => {
         }
     }
 
+    // 1. Official iTunes Top 50 Music Feed (100% Music Chart, 0% Random YouTube Videos)
+    try {
+        const r = await fetch(`https://itunes.apple.com/us/rss/topsongs/limit=50/json`);
+        if (r.ok) {
+            const d = await r.json();
+            const entries = d.feed?.entry || [];
+            if (entries.length > 0) {
+                const newTracks = entries.map(item => ({
+                    videoId: null,
+                    title: item['im:name']?.label || '',
+                    author: item['im:artist']?.label || '',
+                    thumb: item['im:image']?.[2]?.label || item['im:image']?.[0]?.label || ''
+                })).filter(t => t.title && t.author);
+
+                if (newTracks.length > 0 && window.OCTAVE) {
+                    window.OCTAVE.trendingData = {
+                        timestamp: now,
+                        tracks: newTracks
+                    };
+                    if (typeof window.saveCache === 'function') window.saveCache();
+                    if (typeof window.renderTrendingTracks === 'function') {
+                        window.renderTrendingTracks(newTracks, trendingGrid);
+                    }
+                    return;
+                }
+            }
+        }
+    } catch(e) {}
+
+    // 2. Apple Marketing Tools RSS Fallback
     try {
         const r = await fetch(`https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json?_t=${Date.now()}`, { cache: 'no-store' });
         if (r.ok) {
@@ -645,43 +657,6 @@ window.fetchTrendingMusic = async () => {
                     return;
                 }
             }
-        }
-    } catch(e) {}
-
-    try {
-        for (let i = 0; i < window.INVIDIOUS.length; i++) {
-            const base = window.INVIDIOUS[(window.invIdx + i) % window.INVIDIOUS.length];
-            const rawUrl = `${base}/api/v1/popular?videoCategory=10`;
-            const urlsToTry = [rawUrl, `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`];
-
-            let success = false;
-            for (const fetchUrl of urlsToTry) {
-                try {
-                    const controller = new AbortController();
-                    const id = setTimeout(() => controller.abort(), 5000);
-                    const r = await fetch(fetchUrl, { signal: controller.signal });
-                    clearTimeout(id);
-                    if (r.ok) {
-                        const d = await r.json();
-                        if (Array.isArray(d) && d.length > 0) {
-                            const newTracks = d.map(v => ({
-                                videoId: v.videoId,
-                                title: v.title,
-                                author: v.author,
-                                thumb: `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`
-                            }));
-                            window.OCTAVE.trendingData = { timestamp: now, tracks: newTracks };
-                            if (typeof window.saveCache === 'function') window.saveCache();
-                            if (typeof window.renderTrendingTracks === 'function') {
-                                window.renderTrendingTracks(newTracks, trendingGrid);
-                            }
-                            success = true;
-                            break;
-                        }
-                    }
-                } catch (e) { continue; }
-            }
-            if (success) return;
         }
     } catch(e) {}
 
