@@ -4,7 +4,7 @@
 
 // ============================================================
 // app.js — Octave Full Flagship Engine
-// Resilient Multi-Node Search Engine (Direct Native CORS)
+// Resilient Multi-Node Search Engine & Lyrics/Artist Pipeline
 // ============================================================
 
 (function() {
@@ -69,61 +69,109 @@ window.cleanTitleString = (title) => {
         .trim();
 };
 
-// --- LYRICS API IMPLEMENTATION ---
+// --- LYRICS CACHING SYSTEM (0ms RE-LOADS) ---
+window.OCTAVE_LYRICS = {};
+try {
+    const savedLrc = localStorage.getItem('octave_lyrics_cache');
+    if (savedLrc) window.OCTAVE_LYRICS = JSON.parse(savedLrc);
+} catch(e) { window.OCTAVE_LYRICS = {}; }
+
+window.saveLyricsCache = () => {
+    try {
+        const keys = Object.keys(window.OCTAVE_LYRICS);
+        if (keys.length > 250) {
+            delete window.OCTAVE_LYRICS[keys[0]]; // Prune oldest to save storage space
+        }
+        localStorage.setItem('octave_lyrics_cache', JSON.stringify(window.OCTAVE_LYRICS));
+    } catch(e) {}
+};
+
+// Helper for fast API fetches with short timeout
+async function fetchWithTimeout(url, timeoutMs = 3000) {
+    try {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(id);
+        if (res.ok) return await res.json();
+    } catch(e) {}
+    return null;
+}
+
+// --- LYRICS MULTI-API FAST PIPELINE ---
 window.fetchLyrics = async (artist, title) => {
     if (!title) return '<div class="empty-state-text">Track information missing.</div>';
     
     const cleanArtist = window.cleanArtistString(artist);
     const cleanTitle = window.cleanTitleString(title);
+    const cacheKey = `${cleanArtist.toLowerCase()}::${cleanTitle.toLowerCase()}`;
 
-    // 1. LRCLIB Direct Lookup
+    // 0. Instant Local Cache Hit (0ms)
+    if (window.OCTAVE_LYRICS[cacheKey]) {
+        return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(window.OCTAVE_LYRICS[cacheKey])}</div>`;
+    }
+
+    let foundLyrics = null;
+
+    // 1. Lyrica Multi-Source Public Aggregator
     try {
-        const lrcUrl = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(cleanArtist)}&track_name=${encodeURIComponent(cleanTitle)}`;
-        const r = await fetch(lrcUrl);
-        if (r.ok) {
-            const data = await r.json();
-            const text = data.plainLyrics || data.syncedLyrics;
-            if (text) {
-                return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(text)}</div>`;
-            }
+        const lyricaData = await fetchWithTimeout(`https://wilooper-lyrica.hf.space/lyrics/?artist=${encodeURIComponent(cleanArtist)}&song=${encodeURIComponent(cleanTitle)}`, 3000);
+        if (lyricaData?.data?.lyrics) {
+            foundLyrics = lyricaData.data.lyrics;
         }
     } catch(e) {}
 
-    // 2. LRCLIB Search Endpoint Fallback
-    try {
-        const query = `${cleanTitle} ${cleanArtist}`.trim();
-        const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`;
-        const rSearch = await fetch(searchUrl);
-        if (rSearch.ok) {
-            const searchData = await rSearch.json();
-            if (Array.isArray(searchData) && searchData.length > 0) {
-                const match = searchData[0];
-                const text = match.plainLyrics || match.syncedLyrics;
-                if (text) {
-                    return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(text)}</div>`;
-                }
-            }
-        }
-    } catch(e) {}
-
-    // 3. Lyrics.ovh Fallback
-    if (cleanArtist) {
+    // 2. TheAudioDB API
+    if (!foundLyrics && cleanArtist) {
         try {
-            const ovhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`;
-            const r2 = await fetch(ovhUrl);
-            if (r2.ok) {
-                const data2 = await r2.json();
-                if (data2.lyrics) {
-                    return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(data2.lyrics)}</div>`;
-                }
+            const adbData = await fetchWithTimeout(`https://www.theaudiodb.com/api/v1/json/123/searchtrack.php?s=${encodeURIComponent(cleanArtist)}&t=${encodeURIComponent(cleanTitle)}`, 3000);
+            if (adbData?.track?.[0]?.strTrackLyrics) {
+                foundLyrics = adbData.track[0].strTrackLyrics;
             }
         } catch(e) {}
+    }
+
+    // 3. LRCLIB Direct Lookup
+    if (!foundLyrics) {
+        try {
+            const lrcData = await fetchWithTimeout(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(cleanArtist)}&track_name=${encodeURIComponent(cleanTitle)}`, 3000);
+            if (lrcData?.plainLyrics || lrcData?.syncedLyrics) {
+                foundLyrics = lrcData.plainLyrics || lrcData.syncedLyrics;
+            }
+        } catch(e) {}
+    }
+
+    // 4. LRCLIB Search Fallback
+    if (!foundLyrics) {
+        try {
+            const query = `${cleanTitle} ${cleanArtist}`.trim();
+            const lrcSearch = await fetchWithTimeout(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`, 3000);
+            if (Array.isArray(lrcSearch) && lrcSearch.length > 0) {
+                foundLyrics = lrcSearch[0].plainLyrics || lrcSearch[0].syncedLyrics;
+            }
+        } catch(e) {}
+    }
+
+    // 5. Lyrics.ovh Fallback
+    if (!foundLyrics && cleanArtist) {
+        try {
+            const ovhData = await fetchWithTimeout(`https://api.lyrics.ovh/v1/${encodeURIComponent(cleanArtist)}/${encodeURIComponent(cleanTitle)}`, 3000);
+            if (ovhData?.lyrics) {
+                foundLyrics = ovhData.lyrics;
+            }
+        } catch(e) {}
+    }
+
+    if (foundLyrics) {
+        window.OCTAVE_LYRICS[cacheKey] = foundLyrics;
+        window.saveLyricsCache();
+        return `<div style="white-space: pre-wrap; font-size: 15px; line-height: 1.8; color: var(--text-primary); text-align: center; padding: 20px 0;">${window.escapeHTML(foundLyrics)}</div>`;
     }
 
     return '<div class="empty-state-text" style="padding: 40px 0; text-align: center;">No lyrics found for this track.</div>';
 };
 
-// --- ARTIST PROFILE & RECCOBEATS IMPLEMENTATION ---
+// --- ARTIST PROFILE & METADATA PIPELINE ---
 window.fetchFullArtistProfile = async (artistName) => {
     const cleanName = window.cleanArtistString(artistName || 'Unknown Artist');
     
@@ -135,75 +183,43 @@ window.fetchFullArtistProfile = async (artistName) => {
     let banner = '';
     let tracks = [];
 
-    // 1. Wikipedia Summary & Image
+    // 1. Wikipedia Summary API
     try {
-        const wikiUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanName)}`;
-        const wikiRes = await fetch(wikiUrl);
-        if (wikiRes.ok) {
-            const wikiData = await wikiRes.json();
-            if (wikiData.extract) bio = wikiData.extract;
-            if (wikiData.thumbnail && wikiData.thumbnail.source) banner = wikiData.thumbnail.source;
+        const wikiData = await fetchWithTimeout(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanName)}`, 3000);
+        if (wikiData?.extract) bio = wikiData.extract;
+        if (wikiData?.thumbnail?.source) banner = wikiData.thumbnail.source;
+    } catch(e) {}
+
+    // 2. TheAudioDB Artist Lookup (Bio + Visuals)
+    try {
+        const adbArtist = await fetchWithTimeout(`https://www.theaudiodb.com/api/v1/json/123/search.php?s=${encodeURIComponent(cleanName)}`, 3000);
+        if (adbArtist?.artists?.[0]) {
+            const aObj = adbArtist.artists[0];
+            if (!banner && aObj.strArtistThumb) banner = aObj.strArtistThumb;
+            if (aObj.strBiographyEN && bio.startsWith('Listen to')) bio = aObj.strBiographyEN;
         }
     } catch(e) {}
 
-    // 2. iTunes Catalog Fallback (100% Guaranteed Artist Top Songs)
+    // 3. iTunes Catalog Top Songs
     try {
-        const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanName)}&entity=song&limit=10`;
-        const itunesRes = await fetch(itunesUrl);
-        if (itunesRes.ok) {
-            const itunesData = await itunesRes.json();
-            if (itunesData.results && itunesData.results.length > 0) {
-                const seenTitles = new Set();
-                for (const item of itunesData.results) {
-                    const normTitle = window.cleanTitleString(item.trackName).toLowerCase();
-                    if (!seenTitles.has(normTitle)) {
-                        seenTitles.add(normTitle);
-                        tracks.push({
-                            videoId: null,
-                            title: item.trackName,
-                            author: item.artistName,
-                            thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : ''
-                        });
-                    }
-                    if (tracks.length >= 6) break;
+        const itunesData = await fetchWithTimeout(`https://itunes.apple.com/search?term=${encodeURIComponent(cleanName)}&entity=song&limit=10`, 3000);
+        if (itunesData?.results?.length > 0) {
+            const seenTitles = new Set();
+            for (const item of itunesData.results) {
+                const normTitle = window.cleanTitleString(item.trackName).toLowerCase();
+                if (!seenTitles.has(normTitle)) {
+                    seenTitles.add(normTitle);
+                    tracks.push({
+                        videoId: null,
+                        title: item.trackName,
+                        author: item.artistName,
+                        thumb: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : ''
+                    });
                 }
+                if (tracks.length >= 6) break;
             }
         }
     } catch(e) {}
-
-    // 3. ReccoBeats Fallback if iTunes returned < 3 tracks
-    if (tracks.length < 3) {
-        try {
-            const rbUrl = `https://api.reccobeats.com/v1/artist/search?searchText=${encodeURIComponent(cleanName)}`;
-            const rbRes = await fetch(rbUrl);
-            if (rbRes.ok) {
-                const rbData = await rbRes.json();
-                const artistList = rbData?.content || rbData?.data || (Array.isArray(rbData) ? rbData : []);
-                if (artistList.length > 0) {
-                    const artistObj = artistList[0];
-                    const artistId = artistObj.id || artistObj.artistId;
-                    if (artistId) {
-                        const rbTracksRes = await fetch(`https://api.reccobeats.com/v1/artist/${artistId}/track`);
-                        if (rbTracksRes.ok) {
-                            const rbTracksData = await rbTracksRes.json();
-                            const trackList = rbTracksData?.content || rbTracksData?.data || (Array.isArray(rbTracksData) ? rbTracksData : []);
-                            for (const rbT of trackList.slice(0, 5)) {
-                                const tName = rbT.trackTitle || rbT.title || '';
-                                if (tName) {
-                                    tracks.push({
-                                        videoId: null,
-                                        title: tName,
-                                        author: cleanName,
-                                        thumb: ''
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch(e) {}
-    }
 
     const profile = { name: cleanName, bio, banner, tracks };
     if (window.OCTAVE && window.OCTAVE.artistCache) {
@@ -686,8 +702,6 @@ window.bindSearch = () => {
                 return;
             }
             
-            // SINGLE TRACK PLAYBACK ON CLICK:
-            // Only play the exact selected song so Auto-DJ builds fresh recommendations
             results.slice(0, 15).forEach((track) => {
                 const el = document.createElement('div'); 
                 el.className = 'list-item';
