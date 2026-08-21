@@ -319,6 +319,26 @@ function unlockAudioEngine() {
 document.addEventListener('click', unlockAudioEngine, { once: true });
 document.addEventListener('touchstart', unlockAudioEngine, { once: true });
 
+// --- PRE-RESOLVE NEXT TRACK VIDEO ID IN BACKGROUND ---
+async function preloadNextTrackVideoId() {
+    if (!window.OCTAVE || !Array.isArray(window.OCTAVE.queue)) return;
+    const nextIdx = window.OCTAVE.currentIndex + 1;
+    if (nextIdx < window.OCTAVE.queue.length) {
+        const nextTrack = window.OCTAVE.queue[nextIdx];
+        if (nextTrack && !nextTrack.videoId && window.performSearch) {
+            try {
+                const res = await window.performSearch(`${nextTrack.author} ${nextTrack.title} audio`);
+                if (res && res.length > 0 && res[0].videoId) {
+                    nextTrack.videoId = res[0].videoId;
+                    if (!nextTrack.thumb) nextTrack.thumb = res[0].thumb;
+                    window.saveCache();
+                    console.log(`Octave Preload: Resolved next track videoId -> "${nextTrack.title}" (${nextTrack.videoId})`);
+                }
+            } catch (e) {}
+        }
+    }
+}
+
 // --- YOUTUBE IFRAME ENGINE ---
 let YTP = null;
 let ytReadyPromiseResolve = null;
@@ -333,12 +353,13 @@ document.head.appendChild(script);
 window.onYouTubeIframeAPIReady = () => {
     const container = document.createElement('div');
     container.id = 'yt-hidden-frame';
-    container.style.cssText = 'position:fixed;width:1px;height:1px;bottom:0;right:0;opacity:0;pointer-events:none;';
+    // Off-screen styling with non-zero dimensions to bypass Chromium background visibility throttling
+    container.style.cssText = 'position:fixed;width:200px;height:200px;top:-9999px;left:-9999px;opacity:0.01;pointer-events:none;z-index:-999;';
     document.body.appendChild(container);
 
     YTP = new YT.Player('yt-hidden-frame', {
-        height: '1',
-        width: '1',
+        height: '200',
+        width: '200',
         playerVars: { autoplay: 1, controls: 0, playsinline: 1 },
         events: {
             onReady: e => {
@@ -363,7 +384,7 @@ async function playViaIframe(videoId) {
     }
     await ytReadyPromise;
     if (YTP && typeof YTP.loadVideoById === 'function') {
-        YTP.loadVideoById({ videoId: videoId });
+        YTP.loadVideoById({ videoId: videoId, startSeconds: 0 });
         YTP.playVideo();
     }
 }
@@ -381,7 +402,13 @@ function onYTS(e) {
         startProgressTracking();
         syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
-        if (window.OCTAVE.isTransitioning) return;
+        if (window.OCTAVE.isTransitioning) {
+            // Force play through transitional pause states caused by video ID switches
+            if (YTP && typeof YTP.playVideo === 'function') {
+                YTP.playVideo();
+            }
+            return;
+        }
         window.OCTAVE.isPlaying = false;
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
         const fpIcon = document.querySelector('#fp-play i');
@@ -394,7 +421,7 @@ function onYTS(e) {
             if (!AUDIO.src) AUDIO.src = SILENT_MP3;
             AUDIO.play().catch(() => {});
         }
-    } else if (e.data === YT.PlayerState.CUED) {
+    } else if (e.data === YT.PlayerState.CUED || e.data === -1) {
         if (window.OCTAVE.isPlaying || window.OCTAVE.isTransitioning) {
             if (YTP && typeof YTP.playVideo === 'function') {
                 YTP.playVideo();
@@ -408,9 +435,11 @@ function onYTS(e) {
 let progressTimer = null;
 
 function handleTrackEnded() {
+    if (window.OCTAVE.isTransitioning) return;
     window.OCTAVE.isTransitioning = true;
     window.OCTAVE.isPlaying = true;
     clearInterval(progressTimer);
+
     if (window.OCTAVE.currentIndex >= 0) {
         const track = window.OCTAVE.queue[window.OCTAVE.currentIndex];
         if (track && track.videoId) {
@@ -435,7 +464,7 @@ window.playNextLogic = async () => {
         window.OCTAVE.isNextTrackManual = false;
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else {
-        // We are at the end of the queue: fetch Auto-DJ tracks
+        // Queue boundary reached: fetch Auto-DJ recommendations
         updatePlayIcons('fa-solid fa-spinner fa-spin');
 
         if (window.fetchAutoDjBatch) {
@@ -503,6 +532,12 @@ function startProgressTracking() {
         }
 
         if (total > 0 && !isNaN(total)) {
+            // Near-End Watchdog: Auto-advance if track reaches end and browser drops the ENDED event in background
+            if (total > 5 && current >= total - 0.75 && !window.OCTAVE.isTransitioning) {
+                handleTrackEnded();
+                return;
+            }
+
             const percent = (current / total) * 100;
             const miniProg = document.getElementById('mini-progress');
             const fpProg = document.getElementById('fp-progress-fill');
@@ -686,6 +721,9 @@ window.playTrackByIndex = async (index) => {
         AUDIO.play().catch(() => {});
     }
     playViaIframe(track.videoId);
+
+    // Preload next track's video ID immediately for gapless background transitions
+    preloadNextTrackVideoId();
 
     // Proactively fetch smart AI recommendations in background
     if (typeof window.fetchAutoDjBatch === 'function') {
