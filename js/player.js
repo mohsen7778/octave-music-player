@@ -353,7 +353,6 @@ document.head.appendChild(script);
 window.onYouTubeIframeAPIReady = () => {
     const container = document.createElement('div');
     container.id = 'yt-hidden-frame';
-    // Off-screen styling with non-zero dimensions to bypass Chromium background visibility throttling
     container.style.cssText = 'position:fixed;width:200px;height:200px;top:-9999px;left:-9999px;opacity:0.01;pointer-events:none;z-index:-999;';
     document.body.appendChild(container);
 
@@ -376,16 +375,50 @@ window.onYouTubeIframeAPIReady = () => {
     });
 };
 
+let playEnforcerTimer = null;
+function startAutoplayEnforcer() {
+    clearInterval(playEnforcerTimer);
+    let attempts = 0;
+    playEnforcerTimer = setInterval(() => {
+        attempts++;
+        if (!window.OCTAVE.isPlaying || attempts > 35) {
+            clearInterval(playEnforcerTimer);
+            return;
+        }
+
+        if (YTP && typeof YTP.getPlayerState === 'function') {
+            const st = YTP.getPlayerState();
+            if (st === YT.PlayerState.PLAYING) {
+                clearInterval(playEnforcerTimer);
+                return;
+            }
+            try { YTP.playVideo(); } catch(e) {}
+        }
+
+        // Direct iframe postMessage fallback
+        const iframe = document.querySelector('#yt-hidden-frame iframe') || document.querySelector('#yt-hidden-frame');
+        if (iframe && iframe.contentWindow) {
+            try {
+                iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), '*');
+            } catch(e) {}
+        }
+    }, 200);
+}
+
 async function playViaIframe(videoId) {
     updatePlayIcons('fa-solid fa-spinner fa-spin');
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+
     if (AUDIO.paused) {
         if (!AUDIO.src) AUDIO.src = SILENT_MP3;
         AUDIO.play().catch(() => {});
     }
+
     await ytReadyPromise;
     if (YTP && typeof YTP.loadVideoById === 'function') {
         YTP.loadVideoById({ videoId: videoId, startSeconds: 0 });
         YTP.playVideo();
+        startAutoplayEnforcer();
     }
 }
 
@@ -393,6 +426,8 @@ function onYTS(e) {
     if (e.data === YT.PlayerState.PLAYING) {
         window.OCTAVE.isTransitioning = false; 
         window.OCTAVE.isPlaying = true;
+        clearInterval(playEnforcerTimer);
+
         if (AUDIO.paused) {
             if (!AUDIO.src) AUDIO.src = SILENT_MP3;
             AUDIO.play().catch(() => {});
@@ -402,8 +437,8 @@ function onYTS(e) {
         startProgressTracking();
         syncMediaSessionPosition();
     } else if (e.data === YT.PlayerState.PAUSED) {
-        if (window.OCTAVE.isTransitioning) {
-            // Force play through transitional pause states caused by video ID switches
+        if (window.OCTAVE.isTransitioning || window.OCTAVE.isPlaying) {
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
             if (YTP && typeof YTP.playVideo === 'function') {
                 YTP.playVideo();
             }
@@ -417,15 +452,18 @@ function onYTS(e) {
         }
         clearInterval(progressTimer);
     } else if (e.data === YT.PlayerState.BUFFERING) {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
         if (AUDIO.paused) {
             if (!AUDIO.src) AUDIO.src = SILENT_MP3;
             AUDIO.play().catch(() => {});
         }
     } else if (e.data === YT.PlayerState.CUED || e.data === -1) {
         if (window.OCTAVE.isPlaying || window.OCTAVE.isTransitioning) {
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
             if (YTP && typeof YTP.playVideo === 'function') {
                 YTP.playVideo();
             }
+            startAutoplayEnforcer();
         }
     } else if (e.data === YT.PlayerState.ENDED) {
         handleTrackEnded();
@@ -438,6 +476,7 @@ function handleTrackEnded() {
     if (window.OCTAVE.isTransitioning) return;
     window.OCTAVE.isTransitioning = true;
     window.OCTAVE.isPlaying = true;
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     clearInterval(progressTimer);
 
     if (window.OCTAVE.currentIndex >= 0) {
@@ -457,6 +496,8 @@ function handleTrackEnded() {
 
 window.playNextLogic = async () => {
     window.OCTAVE.isTransitioning = true; 
+    window.OCTAVE.isPlaying = true;
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
 
     if (window.ensureQueueBuffer) window.ensureQueueBuffer();
 
@@ -464,7 +505,6 @@ window.playNextLogic = async () => {
         window.OCTAVE.isNextTrackManual = false;
         window.playTrackByIndex(window.OCTAVE.currentIndex + 1);
     } else {
-        // Queue boundary reached: fetch Auto-DJ recommendations
         updatePlayIcons('fa-solid fa-spinner fa-spin');
 
         if (window.fetchAutoDjBatch) {
@@ -503,6 +543,7 @@ window.togglePlay = () => {
         if (window.OCTAVE.isPlaying) {
             window.OCTAVE.isPlaying = false;
             window.OCTAVE.isTransitioning = false;
+            clearInterval(playEnforcerTimer);
             YTP.pauseVideo();
             try { AUDIO.pause(); } catch(e) {}
             updatePlayIcons('fa-solid fa-play');
@@ -512,6 +553,7 @@ window.togglePlay = () => {
             if (!AUDIO.src) AUDIO.src = SILENT_MP3;
             AUDIO.play().catch(() => {});
             YTP.playVideo();
+            startAutoplayEnforcer();
             updatePlayIcons('fa-solid fa-pause');
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
         }
@@ -579,6 +621,10 @@ function updateMediaSession(track) {
         ] : []
     });
 
+    if (window.OCTAVE.isPlaying) {
+        navigator.mediaSession.playbackState = 'playing';
+    }
+
     navigator.mediaSession.setActionHandler('play', () => { 
         window.togglePlay(); 
     });
@@ -633,7 +679,6 @@ window.playTrackByIndex = async (index) => {
     }
     const track = window.OCTAVE.queue[index];
 
-    // On-the-fly resolution if track lacks a videoId (e.g. from iTunes API)
     if (!track.videoId) {
         updatePlayIcons('fa-solid fa-spinner fa-spin');
         try {
@@ -661,6 +706,8 @@ window.playTrackByIndex = async (index) => {
 
     clearInterval(progressTimer);
     window.OCTAVE.isPlaying = true;
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+
     try {
         if ('mediaSession' in navigator && navigator.mediaSession.setPositionState) {
             navigator.mediaSession.setPositionState(null);
@@ -706,7 +753,6 @@ window.playTrackByIndex = async (index) => {
     window.OCTAVE.recentPlayed = [track, ...window.OCTAVE.recentPlayed.filter(t => (t.videoId && track.videoId && t.videoId !== track.videoId) || t.title !== track.title)].slice(0, 50);
     window.saveCache();
 
-    // Instant Queue Buffer populator
     if (window.ensureQueueBuffer) window.ensureQueueBuffer();
 
     if (window.onLifecycleTrackStart) {
@@ -722,10 +768,8 @@ window.playTrackByIndex = async (index) => {
     }
     playViaIframe(track.videoId);
 
-    // Preload next track's video ID immediately for gapless background transitions
     preloadNextTrackVideoId();
 
-    // Proactively fetch smart AI recommendations in background
     if (typeof window.fetchAutoDjBatch === 'function') {
         setTimeout(() => window.fetchAutoDjBatch(), 50);
     }
